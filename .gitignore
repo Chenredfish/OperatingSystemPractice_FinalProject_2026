@@ -1,0 +1,22 @@
+# Build outputs
+*.o
+*.obj
+*.exe
+*.out
+*.bin
+*.elf
+*.map
+*.lst
+
+# IDE / editor
+.vscode/
+*.suo
+*.user
+*.ncb
+*.sdf
+.vs/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
