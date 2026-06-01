@@ -408,6 +408,11 @@ typedef struct os_tcb {
 #if OS_TASK_DEL_EN > 0
     BOOLEAN        OSTCBDelReq;        /* Indicates whether a task needs to delete itself              */
 #endif
+
+    INT32U         OSTCBPeriod;        /* Task period in ticks (0 = not a periodic task)               */
+    INT32U         OSTCBExecTime;      /* Task execution time in ticks                                 */
+    INT32U         OSTCBDeadline;      /* Task absolute deadline in ticks (used by EDF)                */
+    INT8U          OSTCBPrioOrg;       /* Task original priority (used by EDF/PCP to restore)          */
 } OS_TCB;
 
 /*$PAGE*/
@@ -686,7 +691,9 @@ INT8U         OSTaskCreateExt(void  (*task)(void *pd),
                               OS_STK *pbos,
                               INT32U  stk_size,
                               void   *pext,
-                              INT16U  opt);
+                              INT16U  opt,
+                              INT32U  period,
+                              INT32U  exec_time);
 #endif
 
 #if OS_TASK_DEL_EN > 0

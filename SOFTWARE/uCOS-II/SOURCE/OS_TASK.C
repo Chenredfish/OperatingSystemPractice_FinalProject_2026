@@ -268,7 +268,9 @@ INT8U  OSTaskCreateExt (void   (*task)(void *pd),
                         OS_STK  *pbos,
                         INT32U   stk_size,
                         void    *pext,
-                        INT16U   opt)
+                        INT16U   opt,
+                        INT32U   period,
+                        INT32U   exec_time)
 {
 #if OS_CRITICAL_METHOD == 3                  /* Allocate storage for CPU status register               */
     OS_CPU_SR  cpu_sr;
@@ -301,6 +303,10 @@ INT8U  OSTaskCreateExt (void   (*task)(void *pd),
         err = OS_TCBInit(prio, psp, pbos, id, stk_size, pext, opt);
         if (err == OS_NO_ERR) {
             OS_ENTER_CRITICAL();
+            OSTCBPrioTbl[prio]->OSTCBPeriod   = period;
+            OSTCBPrioTbl[prio]->OSTCBExecTime = exec_time;
+            OSTCBPrioTbl[prio]->OSTCBDeadline = period;       /* initial deadline = first period end  */
+            OSTCBPrioTbl[prio]->OSTCBPrioOrg  = prio;         /* save original priority               */
             OSTaskCtr++;                                       /* Increment the #tasks counter         */
             OS_EXIT_CRITICAL();
             if (OSRunning == TRUE) {                           /* Find HPT if multitasking has started */
