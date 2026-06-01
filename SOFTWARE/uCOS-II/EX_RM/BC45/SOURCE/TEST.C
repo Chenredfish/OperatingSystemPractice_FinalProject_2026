@@ -8,6 +8,9 @@
 * Description: Reads taskset.txt, creates periodic tasks, and schedules them
 *              using Rate Monotonic (RM): shorter period = higher priority.
 *              Priority assignment is static and done at task creation time.
+*
+* TODO (Teammate A): Implement TaskStartCreateTasks() and PeriodicTask().
+*   See WORKPLAN.md Section III for details and hints.
 *********************************************************************************************************
 */
 
@@ -105,7 +108,12 @@ void  TaskStart (void *pdata)
 *                                       READ TASKSET AND CREATE TASKS
 *
 * RM rule: shorter period -> higher priority (smaller priority number).
-* We read all tasks, sort by period ascending, then assign priority 1, 2, 3...
+*
+* Steps:
+*   1. Open "taskset.txt", read TaskCount, then read (exec_time, period) for each task.
+*   2. Sort tasks by period ascending -- shortest period gets priority 1.
+*   3. Call OSTaskCreateExt() for each task in sorted order, assigning priority 1, 2, 3...
+*      Pass TaskPeriod[i] and TaskExecTime[i] as the last two arguments (period, exec_time).
 *********************************************************************************************************
 */
 
@@ -129,45 +137,29 @@ static  void  TaskStartCreateTasks (void)
     }
     fclose(fp);
 
-    /* Sort by period ascending -- shortest period gets priority 1 */
-    for (i = 0; i < TaskCount - 1; i++) {
-        for (j = 0; j < TaskCount - 1 - i; j++) {
-            if (TaskPeriod[j] > TaskPeriod[j+1]) {
-                tmpP = TaskPeriod[j];   TaskPeriod[j]   = TaskPeriod[j+1];   TaskPeriod[j+1]   = tmpP;
-                tmpE = TaskExecTime[j]; TaskExecTime[j] = TaskExecTime[j+1]; TaskExecTime[j+1] = tmpE;
-            }
-        }
-    }
+    /* TODO: Sort TaskPeriod[] and TaskExecTime[] together by period ascending */
+    /*       Hint: bubble sort -- swap both arrays together when TaskPeriod[j] > TaskPeriod[j+1] */
 
-    for (i = 0; i < TaskCount; i++) {
-        prio = (INT8U)(i + 1);
-        OSTaskCreateExt(
-            PeriodicTask,
-            (void *)(INT32U)(i + 1),
-            &TaskStk[i][TASK_STK_SIZE - 1],
-            prio,
-            prio,
-            &TaskStk[i][0],
-            TASK_STK_SIZE,
-            (void *)0,
-            OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,
-            TaskPeriod[i],
-            TaskExecTime[i]
-        );
-        sprintf(s, "Task%d: exec=%ld period=%ld prio=%d", (int)(i+1), TaskExecTime[i], TaskPeriod[i], (int)prio);
-        PC_DispStr(0, 5 + i, s, DISP_FGND_WHITE + DISP_BGND_BLACK);
-    }
+    /* TODO: For each task i, assign prio = i+1, then call OSTaskCreateExt() */
+    /*       Pass PeriodicTask as the task function, (void*)(i+1) as pdata    */
+    /*       Pass TaskPeriod[i] and TaskExecTime[i] as the last two arguments */
+    /*       Display each task's info with PC_DispStr at row 5+i              */
 }
 
 /*
 *********************************************************************************************************
 *                                           PERIODIC TASK BODY
 *
-* Each task:
-*   1. Records start tick
-*   2. Busy-waits for OSTCBExecTime ticks (simulates computation, can be preempted)
-*   3. Prints which task ran and when
-*   4. Calls OSTimeDly() to sleep until next period
+* Each task should:
+*   1. Record the current tick as start_tick (use OSTimeGet()).
+*   2. Busy-wait until (OSTimeGet() - start_tick) >= OSTCBCur->OSTCBExecTime.
+*      This simulates computation and can be preempted by a higher-priority task.
+*   3. Display which task ran and at what tick.
+*   4. Calculate remaining time in the period: delay = OSTCBCur->OSTCBPeriod - elapsed.
+*   5. Call OSTimeDly(delay) to sleep until the next period begins.
+*
+* Access the current task's TCB fields via OSTCBCur->OSTCBExecTime, OSTCBCur->OSTCBPeriod.
+* task_id is passed via pdata.
 *********************************************************************************************************
 */
 
@@ -184,22 +176,16 @@ void  PeriodicTask (void *pdata)
     row     = 13 + (int)task_id;
 
     for (;;) {
-        start_tick = OSTimeGet();
+        /* TODO: start_tick = OSTimeGet(); */
 
-        while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) {
-            ;
-        }
+        /* TODO: busy-wait loop for OSTCBCur->OSTCBExecTime ticks */
 
-        elapsed = OSTimeGet() - start_tick;
+        /* TODO: elapsed = OSTimeGet() - start_tick; */
 
-        sprintf(s, "[t=%4ld] Task%d ran  exec=%ld period=%ld",
-                OSTimeGet(), (int)task_id, OSTCBCur->OSTCBExecTime, OSTCBCur->OSTCBPeriod);
-        PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
+        /* TODO: display task execution info using PC_DispStr at row */
 
-        delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
-        if ((INT32S)delay_ticks > 0) {
-            OSTimeDly((INT16U)delay_ticks);
-        }
+        /* TODO: delay_ticks = OSTCBCur->OSTCBPeriod - elapsed; */
+        /* TODO: if delay_ticks > 0, call OSTimeDly((INT16U)delay_ticks); */
     }
 }
 
