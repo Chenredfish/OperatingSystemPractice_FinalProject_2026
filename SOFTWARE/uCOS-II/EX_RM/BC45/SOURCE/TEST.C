@@ -1,12 +1,13 @@
 /*
 *********************************************************************************************************
-*                                                uC/OS-II
-*                                          The Real-Time Kernel
+*                                               uC/OS-II
+*                                         The Real-Time Kernel
 *
-*                           (c) Copyright 1992-2002, Jean J. Labrosse, Weston, FL
-*                                           All Rights Reserved
+*                              OS Practice Final Project -- RM Scheduler
 *
-*                                               EXAMPLE #1
+* Description: Reads taskset.txt, creates periodic tasks, and schedules them
+*              using Rate Monotonic (RM): shorter period = higher priority.
+*              Priority assignment is static and done at task creation time.
 *********************************************************************************************************
 */
 
@@ -14,37 +15,37 @@
 
 /*
 *********************************************************************************************************
-*                                               CONSTANTS
+*                                              CONSTANTS
 *********************************************************************************************************
 */
 
-#define  TASK_STK_SIZE                 512       /* Size of each task's stacks (# of WORDs)            */
-#define  N_TASKS                        1        /* Only one task for homework                         */
+#define  TASK_STK_SIZE   512
+#define  MAX_TASKS         7
 
 /*
 *********************************************************************************************************
-*                                               VARIABLES
+*                                              VARIABLES
 *********************************************************************************************************
 */
 
-OS_STK        TaskStk[N_TASKS][TASK_STK_SIZE];        /* Tasks stacks                                  */
-OS_STK        TaskStartStk[TASK_STK_SIZE];
-char          TaskData[N_TASKS];                      /* Parameters to pass to each task               */
-OS_EVENT     *RandomSem;
+OS_STK  TaskStk[MAX_TASKS][TASK_STK_SIZE];
+OS_STK  TaskStartStk[TASK_STK_SIZE];
+
+INT32U  TaskPeriod[MAX_TASKS];
+INT32U  TaskExecTime[MAX_TASKS];
+int     TaskCount = 0;
 
 /*
 *********************************************************************************************************
-*                                           FUNCTION PROTOTYPES
+*                                         FUNCTION PROTOTYPES
 *********************************************************************************************************
 */
 
-        void  Task(void *data);                       /* Function prototypes of tasks                  */
-        void  TaskStart(void *data);                  /* Function prototypes of Startup task           */
-static  void  TaskStartCreateTasks(void);
-static  void  TaskStartDispInit(void);
-static  void  TaskStartDisp(void);
+void  TaskStart(void *pdata);
+void  PeriodicTask(void *pdata);
+static void  TaskStartCreateTasks(void);
+static void  TaskStartDispInit(void);
 
-/*$PAGE*/
 /*
 *********************************************************************************************************
 *                                                MAIN
@@ -53,63 +54,155 @@ static  void  TaskStartDisp(void);
 
 void  main (void)
 {
-    PC_DispClrScr(DISP_FGND_WHITE + DISP_BGND_BLACK);      /* Clear the screen                         */
+    PC_DispClrScr(DISP_FGND_WHITE + DISP_BGND_BLACK);
 
-    OSInit();                                              /* Initialize uC/OS-II                      */
+    OSInit();
 
-    PC_DOSSaveReturn();                                    /* Save environment to return to DOS        */
-    PC_VectSet(uCOS, OSCtxSw);                             /* Install uC/OS-II's context switch vector */
-
-    RandomSem   = OSSemCreate(1);                          /* Random number semaphore                  */
+    PC_DOSSaveReturn();
+    PC_VectSet(uCOS, OSCtxSw);
 
     OSTaskCreate(TaskStart, (void *)0, &TaskStartStk[TASK_STK_SIZE - 1], 0);
-    OSStart();                                             /* Start multitasking                       */
+    OSStart();
 }
-
 
 /*
 *********************************************************************************************************
-*                                              STARTUP TASK
+*                                           STARTUP TASK
 *********************************************************************************************************
 */
+
 void  TaskStart (void *pdata)
 {
-#if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
+#if OS_CRITICAL_METHOD == 3
     OS_CPU_SR  cpu_sr;
 #endif
-    char       s[100];
-    INT16S     key;
+    INT16S  key;
 
+    pdata = pdata;
 
-    pdata = pdata;                                         /* Prevent compiler warning                 */
-
-    TaskStartDispInit();                                   /* Initialize the display                   */
+    TaskStartDispInit();
 
     OS_ENTER_CRITICAL();
-    PC_VectSet(0x08, OSTickISR);                           /* Install uC/OS-II's clock tick ISR        */
-    PC_SetTickRate(OS_TICKS_PER_SEC);                      /* Reprogram tick rate                      */
+    PC_VectSet(0x08, OSTickISR);
+    PC_SetTickRate(OS_TICKS_PER_SEC);
     OS_EXIT_CRITICAL();
 
-    OSStatInit();                                          /* Initialize uC/OS-II's statistics         */
-
-    TaskStartCreateTasks();                                /* Create all the application tasks         */
+    OSStatInit();
+    TaskStartCreateTasks();
 
     for (;;) {
-        TaskStartDisp();                                  /* Update the display                       */
-
-
-        if (PC_GetKey(&key) == TRUE) {                     /* See if key has been pressed              */
-            if (key == 0x1B) {                             /* Yes, see if it's the ESCAPE key          */
-                PC_DOSReturn();                            /* Return to DOS                            */
+        if (PC_GetKey(&key) == TRUE) {
+            if (key == 0x1B) {
+                PC_DOSReturn();
             }
         }
-
-        OSCtxSwCtr = 0;                                    /* Clear context switch counter             */
-        OSTimeDlyHMSM(0, 0, 1, 0);                         /* Wait one second                          */
+        OSTimeDlyHMSM(0, 0, 1, 0);
     }
 }
 
-/*$PAGE*/
+/*
+*********************************************************************************************************
+*                                       READ TASKSET AND CREATE TASKS
+*
+* RM rule: shorter period -> higher priority (smaller priority number).
+* We read all tasks, sort by period ascending, then assign priority 1, 2, 3...
+*********************************************************************************************************
+*/
+
+static  void  TaskStartCreateTasks (void)
+{
+    FILE   *fp;
+    int     i, j;
+    INT32U  tmpP, tmpE;
+    INT8U   prio;
+    char    s[80];
+
+    fp = fopen("taskset.txt", "r");
+    if (fp == (FILE *)0) {
+        PC_DispStr(0, 5, "ERROR: cannot open taskset.txt", DISP_FGND_RED + DISP_BGND_BLACK);
+        return;
+    }
+
+    fscanf(fp, "%d", &TaskCount);
+    for (i = 0; i < TaskCount; i++) {
+        fscanf(fp, "%ld %ld", &TaskExecTime[i], &TaskPeriod[i]);
+    }
+    fclose(fp);
+
+    /* Sort by period ascending -- shortest period gets priority 1 */
+    for (i = 0; i < TaskCount - 1; i++) {
+        for (j = 0; j < TaskCount - 1 - i; j++) {
+            if (TaskPeriod[j] > TaskPeriod[j+1]) {
+                tmpP = TaskPeriod[j];   TaskPeriod[j]   = TaskPeriod[j+1];   TaskPeriod[j+1]   = tmpP;
+                tmpE = TaskExecTime[j]; TaskExecTime[j] = TaskExecTime[j+1]; TaskExecTime[j+1] = tmpE;
+            }
+        }
+    }
+
+    for (i = 0; i < TaskCount; i++) {
+        prio = (INT8U)(i + 1);
+        OSTaskCreateExt(
+            PeriodicTask,
+            (void *)(INT32U)(i + 1),
+            &TaskStk[i][TASK_STK_SIZE - 1],
+            prio,
+            prio,
+            &TaskStk[i][0],
+            TASK_STK_SIZE,
+            (void *)0,
+            OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,
+            TaskPeriod[i],
+            TaskExecTime[i]
+        );
+        sprintf(s, "Task%d: exec=%ld period=%ld prio=%d", (int)(i+1), TaskExecTime[i], TaskPeriod[i], (int)prio);
+        PC_DispStr(0, 5 + i, s, DISP_FGND_WHITE + DISP_BGND_BLACK);
+    }
+}
+
+/*
+*********************************************************************************************************
+*                                           PERIODIC TASK BODY
+*
+* Each task:
+*   1. Records start tick
+*   2. Busy-waits for OSTCBExecTime ticks (simulates computation, can be preempted)
+*   3. Prints which task ran and when
+*   4. Calls OSTimeDly() to sleep until next period
+*********************************************************************************************************
+*/
+
+void  PeriodicTask (void *pdata)
+{
+    INT32U  start_tick;
+    INT32U  elapsed;
+    INT32U  delay_ticks;
+    INT8U   task_id;
+    char    s[80];
+    int     row;
+
+    task_id = (INT8U)(INT32U)pdata;
+    row     = 13 + (int)task_id;
+
+    for (;;) {
+        start_tick = OSTimeGet();
+
+        while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) {
+            ;
+        }
+
+        elapsed = OSTimeGet() - start_tick;
+
+        sprintf(s, "[t=%4ld] Task%d ran  exec=%ld period=%ld",
+                OSTimeGet(), (int)task_id, OSTCBCur->OSTCBExecTime, OSTCBCur->OSTCBPeriod);
+        PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
+
+        delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
+        if ((INT32S)delay_ticks > 0) {
+            OSTimeDly((INT16U)delay_ticks);
+        }
+    }
+}
+
 /*
 *********************************************************************************************************
 *                                        INITIALIZE THE DISPLAY
@@ -118,138 +211,10 @@ void  TaskStart (void *pdata)
 
 static  void  TaskStartDispInit (void)
 {
-/*                                1111111111222222222233333333334444444444555555555566666666667777777777 */
-/*                      01234567890123456789012345678901234567890123456789012345678901234567890123456789 */
-    PC_DispStr( 0,  0, "                         uC/OS-II, The Real-Time Kernel                         ", DISP_FGND_WHITE + DISP_BGND_RED + DISP_BLINK);
-    PC_DispStr( 0,  1, "                                Jean J. Labrosse                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  2, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  3, "                                    EXAMPLE #1                                  ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  4, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  5, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  6, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  7, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  8, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  9, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 10, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 11, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 12, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 13, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 14, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 15, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 16, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 17, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 18, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 19, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 20, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 21, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 22, "#Tasks          :        CPU Usage:     %                                       ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 23, "#Task switch/sec:                                                               ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0, 24, "                            <-PRESS 'ESC' TO QUIT->                             ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY + DISP_BLINK);
-/*                                1111111111222222222233333333334444444444555555555566666666667777777777 */
-/*                      01234567890123456789012345678901234567890123456789012345678901234567890123456789 */
-}
-
-/*$PAGE*/
-/*
-*********************************************************************************************************
-*                                           UPDATE THE DISPLAY
-*********************************************************************************************************
-*/
-
-static  void  TaskStartDisp (void)
-{
-    char   s[80];
-
-
-    sprintf(s, "%5d", OSTaskCtr);                                  /* Display #tasks running               */
-    PC_DispStr(18, 22, s, DISP_FGND_YELLOW + DISP_BGND_BLUE);
-
-#if OS_TASK_STAT_EN > 0
-    sprintf(s, "%3d", OSCPUUsage);                                 /* Display CPU usage in %               */
-    PC_DispStr(36, 22, s, DISP_FGND_YELLOW + DISP_BGND_BLUE);
-#endif
-
-    sprintf(s, "%5d", OSCtxSwCtr);                                 /* Display #context switches per second */
-    PC_DispStr(18, 23, s, DISP_FGND_YELLOW + DISP_BGND_BLUE);
-
-    sprintf(s, "V%1d.%02d", OSVersion() / 100, OSVersion() % 100); /* Display uC/OS-II's version number    */
-    PC_DispStr(75, 24, s, DISP_FGND_YELLOW + DISP_BGND_BLUE);
-
-    switch (_8087) {                                               /* Display whether FPU present          */
-        case 0:
-             PC_DispStr(71, 22, " NO  FPU ", DISP_FGND_YELLOW + DISP_BGND_BLUE);
-             break;
-
-        case 1:
-             PC_DispStr(71, 22, " 8087 FPU", DISP_FGND_YELLOW + DISP_BGND_BLUE);
-             break;
-
-        case 2:
-             PC_DispStr(71, 22, "80287 FPU", DISP_FGND_YELLOW + DISP_BGND_BLUE);
-             break;
-
-        case 3:
-             PC_DispStr(71, 22, "80387 FPU", DISP_FGND_YELLOW + DISP_BGND_BLUE);
-             break;
-    }
-}
-
-/*$PAGE*/
-/*
-*********************************************************************************************************
-*                                             CREATE TASKS
-*********************************************************************************************************
-*/
-
-static  void  TaskStartCreateTasks (void)
-{
-    OSTaskCreate(Task, (void *)0, &TaskStk[0][TASK_STK_SIZE - 1], 1);
-}
-
-/*
-*********************************************************************************************************
-*                                                  TASKS
-*********************************************************************************************************
-*/
-
-void  Task (void *pdata)
-{
-    char   s[20];
-    INT8U  i;
-
-    pdata = pdata;
-
-    /* Step 1: Print homework message */
-    PC_DispStr(0, 5, "This is OPS homework!", DISP_FGND_WHITE + DISP_BGND_BLACK);
-
-    /* Step 2: Delay 3 seconds */
-    OSTimeDlyHMSM(0, 0, 3, 0);
-
-    /* Step 3: Print student ID */
-    PC_DispStr(0, 6, "B1229057", DISP_FGND_WHITE + DISP_BGND_BLACK);
-
-    /* Step 4: Delay 2 seconds */
-    OSTimeDlyHMSM(0, 0, 2, 0);
-
-    /* Step 5~7: Infinite loop - count down from 57 to 0 */
-    for (;;) {
-        INT8U elapesed = 0;
-        /* Step 5: Count down XY to 0, delay 1 sec each */
-        for (i = 57; i != 255; i--) {
-            
-            sprintf(s, "%d (%ds)", i, elapesed);
-            PC_DispStr(0, 8, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
-            OSTimeDlyHMSM(0, 0, 1, 0);
-            elapesed++;
-            if (i == 0) {
-                break;
-            }
-        }
-
-        /* Step 6: Clear numbers and delay 3 seconds */
-        PC_DispStr(0, 8, "     ", DISP_FGND_BLACK + DISP_BGND_BLACK);
-        OSTimeDlyHMSM(0, 0, 3, 0);
-
-        /* Step 7: Loop back to Step 5 */
-    }
+    PC_DispStr(0,  0, "         uC/OS-II  --  RM Scheduler  --  OS Practice Final Project         ",
+               DISP_FGND_WHITE + DISP_BGND_RED);
+    PC_DispStr(0,  2, "Scheduler: Rate Monotonic (RM)  |  shorter period = higher priority",
+               DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr(0, 24, "                         <-- PRESS ESC TO QUIT -->                          ",
+               DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY + DISP_BLINK);
 }

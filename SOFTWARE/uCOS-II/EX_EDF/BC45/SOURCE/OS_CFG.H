@@ -27,10 +27,10 @@
                                        /* ... MUST be > 0                                              */
 #define OS_MAX_QS                 2    /* Max. number of queue control blocks in your application ...  */
                                        /* ... MUST be > 0                                              */
-#define OS_MAX_TASKS             11    /* Max. number of tasks in your application ...                 */
+#define OS_MAX_TASKS             18    /* Max. number of tasks in your application ...                 */
                                        /* ... MUST be >= 2                                             */
 
-#define OS_LOWEST_PRIO           12    /* Defines the lowest priority that can be assigned ...         */
+#define OS_LOWEST_PRIO           20    /* Defines the lowest priority that can be assigned ...         */
                                        /* ... MUST NEVER be higher than 63!                            */
 
 #define OS_TASK_IDLE_STK_SIZE   512    /* Idle task stack size (# of OS_STK wide entries)              */
@@ -109,6 +109,8 @@
 
 
 #define OS_TICKS_PER_SEC        200    /* Set the number of ticks in one second                        */
+
+#define SCHED_EDF                 1    /* Enable EDF scheduler in OS_Sched()                           */
 
 
 typedef INT16U             OS_FLAGS;   /* Date type for event flag bits (8, 16 or 32 bits)             */
