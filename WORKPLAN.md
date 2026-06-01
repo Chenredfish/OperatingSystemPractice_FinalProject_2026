@@ -3,326 +3,381 @@
 > 長庚大學 作業系統實習 Final Project  
 > 截止日：2026/06/08 23:00 | Demo：2026/06/11
 
+**每個人只需閱讀自己對應的章節，其他章節可選擇性閱讀。**
+
+| 章節 | 負責人 | 工作摘要 |
+|------|--------|----------|
+| [一](#一組員-a-的工作rm-排程器) | 組員 A | RM 排程器：完成 EX_RM/TEST.C |
+| [二](#二組員-b-的工作edf-排程器) | 組員 B | EDF 排程器：完成 EX_EDF/TEST.C |
+| [三](#三組員-c-的工作pcp-加分題30) | 組員 C | PCP 加分題：修改 OS_SEM.C + uCOS_II.H |
+| [四](#四報告大綱) | 全體 | 報告大綱 |
+
 ---
 
-## 一、共同必讀（所有人都要了解）
+## 一、組員 A 的工作：RM 排程器
 
-### 1-1 uC/OS II 排程機制
+### 你的任務
 
-uC/OS II 是**優先權驅動**的即時作業系統，核心規則只有一條：
-
-> **優先權數字越小，優先權越高。排程器永遠選擇優先權數字最小的 ready task 執行。**
-
-我們要實作的 RM 和 EDF，本質上都是「在每次做排程決定前，動態計算誰應該有最高優先權，然後把那個 task 的優先權數字改成最小」。
-
-### 1-2 Task 的生命週期
+在以下檔案完成兩個函數：
 
 ```
-建立 (OSTaskCreateExt)
-    ↓
-Ready（就緒）
-    ↓
-Running（執行中）←─────────────────────┐
-    ↓                                   │
-完成一個執行週期                         │
-    ↓                                   │
-更新 deadline（EDF 需要）               │
-    ↓                                   │
-OSTimeDly() → Delayed（等待下一個週期）  │
-    ↓                                   │
-時間到 → Ready ─────────────────────────┘
+SOFTWARE/uCOS-II/EX_RM/BC45/SOURCE/TEST.C
 ```
 
-### 1-3 所有人都必須知道的關鍵函數
+- `TaskStartCreateTasks()`：讀取 taskset.txt，依 RM 規則排序並建立 tasks
+- `PeriodicTask()`：每個 task 的執行主體
 
-| 函數 | 所在檔案 | 說明 |
-|------|----------|------|
-| `OS_Sched()` | os_core.c | **最核心**：決定下一個執行的 task，每次可能發生 context switch |
-| `OSTimeTick()` | os_core.c | 每個 timer tick 呼叫一次，負責將 delayed task 倒計時 |
-| `OSIntExit()` | os_core.c | 中斷結束後觸發重新排程 |
-| `OSTaskCreateExt()` | os_task.c | 建立 task，我們會修改它來傳入 period 和 exec_time |
-| `OSTaskChangePrio(oldprio, newprio)` | os_task.c | 動態修改某個 task 的優先權數字 |
-| `OSTimeDly(ticks)` | os_time.c | 讓目前執行中的 task 暫停指定 ticks，進入 delayed 狀態 |
-| `OSTimeGet()` | os_time.c | 取得目前系統時間（單位：ticks） |
-| `OSStart()` | os_core.c | 啟動 OS，開始執行 tasks |
+OS_Sched() 和其他核心檔案**不需要動**。RM 的靜態優先權在建立 task 時就決定好，uC/OS II 原有排程器自然會選最高優先權的 ready task 執行。
 
-### 1-4 修改後的 OS_TCB 結構（所有人的程式都依賴這個）
+---
 
-`OS_TCB` 是每個 task 的控制區塊（Task Control Block），定義在 `ucos_ii.h`。  
-基礎架構的人會加入以下欄位，**其他人在程式中可以直接用**：
+### RM 概念
 
-| 欄位名稱 | 型別 | 用途 |
-|----------|------|------|
-| `OSTCBPeriod` | INT32U | task 的週期（ticks） |
-| `OSTCBExecTime` | INT32U | task 的執行時間（ticks） |
-| `OSTCBDeadline` | INT32U | task 的絕對截止時間（EDF 使用） |
-| `OSTCBPrioOrg` | INT8U | task 的原始優先權（PCP 恢復用） |
+Rate Monotonic 排程規則：**週期越短的 task，優先權越高**。
+這個優先權在系統啟動時就固定，不會因執行狀況而改變（靜態優先權）。
 
-`OSTCBCur` 是 uC/OS II 內建的全域指標，永遠指向**目前正在執行的 task 的 TCB**。
+uC/OS II 的優先權機制：**數字越小 = 優先權越高**，排程器永遠挑數字最小的 ready task 來跑。
 
-### 1-5 RM vs EDF 核心差異
+所以 RM 的做法是：把任務按 period 由小到大排序，分配優先權 1, 2, 3...（period 最短的拿到 1，天然最優先）。
 
-| | RM（Rate Monotonic） | EDF（Earliest Deadline First） |
-|--|----------------------|-------------------------------|
-| 排程依據 | **週期**（靜態，不會變） | **絕對截止時間**（動態，每個週期更新） |
-| 誰的優先權最高 | `OSTCBPeriod` 最小的 task | `OSTCBDeadline` 最小的 task |
-| 優先權幾時重新計算 | 每次呼叫 `OS_Sched()` | 每次呼叫 `OS_Sched()` |
+---
 
-### 1-6 taskset.txt 格式
+### taskset.txt 格式
 
 ```
 4          ← task 數量
-1 12       ← task 1：執行時間=1, 週期=12
-1 7        ← task 2：執行時間=1, 週期=7
-2 19       ← task 3：執行時間=2, 週期=19
-3 20       ← task 4：執行時間=3, 週期=20
+1 12       ← task 1：執行時間=1 ticks, 週期=12 ticks
+1 7        ← task 2：執行時間=1 ticks, 週期=7 ticks
+2 19       ← task 3：執行時間=2 ticks, 週期=19 ticks
+3 20       ← task 4：執行時間=3 ticks, 週期=20 ticks
+```
+
+格式：每行兩個數字，依序是 `exec_time` 和 `period`。
+
+---
+
+### 你需要用到的 TCB 欄位
+
+基礎架構已在 OS_TCB 加入以下欄位，透過 `OSTCBCur->欄位名稱` 存取目前執行中 task 的值：
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `OSTCBPeriod` | INT32U | task 的週期（ticks） |
+| `OSTCBExecTime` | INT32U | task 的執行時間（ticks） |
+
+`OSTCBCur` 是 uC/OS II 內建的全域指標，永遠指向目前執行中的 task 的 TCB。
+
+---
+
+### 你需要用到的函數
+
+**`OSTaskCreateExt(func, pdata, stk_top, prio, id, stk_bot, stk_size, ext, opt, period, exec_time)`**  
+建立 task。最後兩個參數是基礎架構新增的 `period` 和 `exec_time`。  
+其中 `prio` 和 `id` 填同一個值即可，`stk_top` 是 `&TaskStk[i][TASK_STK_SIZE-1]`，`stk_bot` 是 `&TaskStk[i][0]`。
+
+**`OSTimeGet()`**  
+回傳目前系統時間（ticks），型別 INT32U。
+
+**`OSTimeDly(ticks)`**  
+讓目前 task 暫停指定 ticks 後再恢復，用於等待下一個週期。
+
+**`PC_DispStr(col, row, str, attr)`**  
+在螢幕指定位置顯示字串。
+
+---
+
+### TaskStartCreateTasks() 要做什麼
+
+1. `fopen("taskset.txt", "r")` 讀取 `TaskCount`，再用迴圈讀取每個 task 的 `TaskExecTime[i]` 和 `TaskPeriod[i]`
+2. **對兩個陣列做 bubble sort，依 `TaskPeriod[]` 升序排列**（注意：排序時要同步移動 `TaskExecTime[]`）
+3. 用迴圈建立 tasks，`prio = i + 1`（i 從 0 開始，所以 priority 是 1, 2, 3...）
+   - `OSTaskCreateExt(PeriodicTask, (void*)(INT32U)(i+1), &TaskStk[i][TASK_STK_SIZE-1], prio, prio, &TaskStk[i][0], TASK_STK_SIZE, (void*)0, OS_TASK_OPT_STK_CHK|OS_TASK_OPT_STK_CLR, TaskPeriod[i], TaskExecTime[i])`
+4. 每個 task 建立後，用 `PC_DispStr` 顯示 task 資訊（row 用 5+i）
+
+---
+
+### PeriodicTask() 要做什麼
+
+每次迴圈代表一個執行週期：
+
+1. 記錄開始時間：`start_tick = OSTimeGet()`
+2. 忙碌等待，直到經過 `OSTCBCur->OSTCBExecTime` ticks：
+   ```c
+   while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) { ; }
+   ```
+   這段期間，若有更高優先權的 task ready，排程器會自動搶占（preempt）此 task
+3. 計算實際經過時間：`elapsed = OSTimeGet() - start_tick`
+4. 用 `PC_DispStr` 輸出此 task 在哪個 tick 執行了多久（row 用 13+task_id）
+5. 計算剩餘等待時間並休眠：
+   ```c
+   delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
+   if ((INT32S)delay_ticks > 0) { OSTimeDly((INT16U)delay_ticks); }
+   ```
+
+`task_id` 從 pdata 取得：`task_id = (INT8U)(INT32U)pdata`
+
+---
+
+### 編譯與執行
+
+1. 把整個 `SOFTWARE` 資料夾複製到虛擬機 `C:\`（覆蓋原本的）
+2. 在虛擬機進入 `C:\SOFTWARE\uCOS-II\EX_RM\BC45\TEST\`，執行 `MAKETEST.BAT`
+3. 執行產生的 `TEST.EXE`，按 ESC 離開
+
+### 驗證
+
+觀察輸出，確認 period=7 的 task 最先執行，period=12 次之，以此類推。
+
+---
+
+## 二、組員 B 的工作：EDF 排程器
+
+### 你的任務
+
+在以下檔案完成兩個函數：
+
+```
+SOFTWARE/uCOS-II/EX_EDF/BC45/SOURCE/TEST.C
+```
+
+- `TaskStartCreateTasks()`：讀取 taskset.txt，建立 tasks
+- `PeriodicTask()`：每個 task 的執行主體，**包含 deadline 更新邏輯**
+
+EDF 的排程邏輯（在 `OS_Sched()` 裡找最小 deadline 的 task 給它最高優先權）**已由基礎架構實作完成**，`OS_CFG.H` 裡也已定義 `SCHED_EDF`。你只需要讓 tasks 在每個週期結束後正確更新自己的 deadline。
+
+---
+
+### EDF 概念
+
+Earliest Deadline First 排程規則：**絕對 deadline 最近（最小）的 task，優先權最高**。
+與 RM 不同，EDF 的優先權是**動態的**——每個週期後 deadline 往後推一個 period，排程器根據新 deadline 重新決定誰最緊急。
+
+uC/OS II 原本用優先權數字決定誰先跑，EDF 的做法是：每次排程時找出 deadline 最小的 ready task，用 `OSTaskChangePrio()` 把它的優先權改成 1（最高），讓原本的排程器自然選到它。
+
+---
+
+### taskset.txt 格式（同 EX_RM）
+
+```
+4
+1 12
+1 7
+2 19
+3 20
 ```
 
 ---
 
-## 二、基礎架構（負責人：你）
+### 你需要用到的 TCB 欄位
 
-> **其他人的工作都依賴這部分，請優先完成。**
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `OSTCBPeriod` | INT32U | task 的週期（ticks） |
+| `OSTCBExecTime` | INT32U | task 的執行時間（ticks） |
+| `OSTCBDeadline` | INT32U | task 的**絕對截止時間**（從系統啟動算的 ticks），初始值 = period，每個週期後 += period |
 
-### 工作清單
-
-- [ ] 修改 `ucos_ii.h`：在 OS_TCB 加入新欄位
-- [ ] 修改 `os_task.c`：更新 `OSTaskCreateExt()` 簽名與初始化
-- [ ] 修改 `main.c`：讀取 taskset.txt 並建立 tasks
-- [ ] 定義共用的 task 骨架函數
-
-### 需要動的地方
-
-**`ucos_ii.h`**  
-找到 `OS_TCB` struct，加入上方表格列出的四個新欄位。
-
-**`os_task.c` — `OSTaskCreateExt()`**  
-原本這個函數接受優先權、stack 大小等參數來建立 task。  
-需要額外加入 `period` 和 `exec_time` 兩個參數，並在建立 TCB 後把值寫進對應欄位。  
-初始 `OSTCBDeadline` 建議設為第一個週期結束時（即等於 period）。  
-注意：`ucos_ii.h` 中也有這個函數的宣告，記得同步修改。
-
-**`main.c`**  
-程式啟動後要讀取 `taskset.txt`，根據裡面的數量和參數動態建立對應的 tasks，最後呼叫 `OSStart()` 開始執行。
-
-**Task 骨架函數**  
-每個 task 都執行無窮迴圈。每次迴圈代表一個執行週期，流程是：
-1. 記錄開始時間（`OSTimeGet()`）
-2. 模擬執行直到 `OSTCBExecTime` 時間到
-3. 更新下一個絕對 deadline（`OSTCBDeadline += OSTCBPeriod`）
-4. 計算剩餘等待時間後呼叫 `OSTimeDly()` 休眠到下一個週期
+`OSTCBCur` 是 uC/OS II 內建的全域指標，永遠指向目前執行中的 task 的 TCB。
 
 ---
 
-## 三、組員 A 的工作（RM 排程器）
+### 你需要用到的函數
 
-> **Branch 名稱：** `feature/rm`  
-> **等基礎架構 merge 進 main 後，從 main 開 branch**
+（同組員 A：`OSTaskCreateExt` / `OSTimeGet` / `OSTimeDly` / `PC_DispStr`，用法相同）
 
-### 目標
+---
 
-修改 `os_core.c` 中的 `OS_Sched()`，讓系統在每次做排程決定之前，先根據 RM 規則重新計算誰應該有最高優先權。
+### TaskStartCreateTasks() 要做什麼
 
-### RM 規則
+EDF **不需要排序**，OS_Sched() 會動態處理順序。直接建立 tasks，分配優先權 `BASE_PRIO + i`（BASE_PRIO = 10，所以是 10, 11, 12...）。
 
-> 週期（`OSTCBPeriod`）越短的 task，優先權越高（優先權數字越小）。
+1. `fopen("taskset.txt", "r")` 讀取 TaskCount 和各 task 的 exec_time / period
+2. 直接建立 tasks，`prio = BASE_PRIO + i`
+   - 參數格式同組員 A，最後兩個傳 `TaskPeriod[i]` 和 `TaskExecTime[i]`
 
-### 需要理解的事
+---
 
-- `OS_Sched()` 內部如何找到下一個要執行的 task（閱讀原始碼）
-- `OSTCBPrioTbl[]` 是什麼：一個以優先權數字為 index 的陣列，存放每個優先權對應的 TCB 指標
-- `OSTCBStat` 欄位如何判斷一個 task 是否在 ready 狀態
-- `OSTaskChangePrio(oldprio, newprio)` 的使用方式和限制（同一個優先權數字不能同時有兩個 task）
+### PeriodicTask() 要做什麼
 
-### 要做的事
+步驟與 RM 幾乎相同，**關鍵差異是第 4 步**，必須在 `OSTimeDly()` 之前更新 deadline：
 
-在 `OS_Sched()` 的排程邏輯**之前**，插入一段程式：
-1. 掃描所有存在的 TCB
-2. 找出所有處於 ready 狀態的 task
-3. 依照 `OSTCBPeriod` 由小到大排序
-4. 用 `OSTaskChangePrio()` 重新分配優先權數字（period 最小 → 優先權數字最小）
-5. 讓 uC/OS II 原有的排程邏輯繼續執行（它會自然選到優先權最高的那個）
+1. `start_tick = OSTimeGet()`
+2. 忙碌等待 `OSTCBCur->OSTCBExecTime` ticks
+3. `elapsed = OSTimeGet() - start_tick`
+4. 用 `PC_DispStr` 輸出此 task 的執行資訊（建議顯示 `OSTCBDeadline` 方便驗證）
+5. **更新 deadline（必須在 OSTimeDly 之前）：**
+   ```c
+   OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;
+   ```
+6. 計算剩餘等待時間並休眠：`OSTimeDly((INT16U)(OSTCBCur->OSTCBPeriod - elapsed))`
 
-### 注意事項
+**為什麼 deadline 更新必須在 OSTimeDly() 之前？**  
+task 呼叫 `OSTimeDly()` 後進入 delayed 狀態，醒來時排程器立即重新決定誰先跑。排程器讀的是 `OSTCBDeadline`，如果這時還沒更新，排程器看到的是上一個週期的舊 deadline，會做出錯誤決定。
 
-- 優先權衝突：重新分配時，必須先把舊優先權讓出來再指定新的，否則 `OSTaskChangePrio()` 會失敗
-- 不要修改 `OS_IDLE_PRIO`（idle task 的優先權，通常是最低的那個）
+---
+
+### 編譯與執行
+
+1. 把 `SOFTWARE` 資料夾複製到虛擬機 `C:\`
+2. 進入 `C:\SOFTWARE\uCOS-II\EX_EDF\BC45\TEST\`，執行 `MAKETEST.BAT`
+3. 執行 `TEST.EXE`
 
 ### 驗證
 
-用 Input Example 1 跑程式，確認週期 7 的 task 確實最先執行。
+觀察輸出，確認每次執行的都是當下 deadline 最小（最緊急）的 task。
 
 ---
 
-## 四、組員 B 的工作（EDF 排程器）
+## 三、組員 C 的工作：PCP 加分題（+30%）
 
-> **Branch 名稱：** `feature/edf`  
-> **等基礎架構 merge 進 main 後，從 main 開 branch**
+### 你的任務
 
-### 目標
+實作 Priority Ceiling Protocol（PCP）。需要修改以下三個地方：
 
-修改 `os_core.c` 中的 `OS_Sched()`，讓系統每次排程時根據 EDF 規則選出下一個執行的 task。
-
-### EDF 規則
-
-> 絕對 deadline（`OSTCBDeadline`）越小（越早到期）的 task，優先權越高。
-
-### RM vs EDF 的關鍵差異
-
-EDF 的 `OS_Sched()` 邏輯結構和 RM **幾乎相同**，差別在於：
-- RM 比較 `OSTCBPeriod`
-- EDF 比較 `OSTCBDeadline`
-
-但 EDF 的難點在於 deadline 是**動態變化**的——每次 task 完成一個週期後 deadline 要往前推一個 period。這個更新已經在 task 骨架裡（基礎架構的人完成），你需要確認它的時機是否正確。
-
-### 需要理解的事
-
-- `OSTCBDeadline` 代表的是**絕對時間**（從系統啟動到截止的 ticks），不是剩餘時間
-- Deadline 更新必須在 `OSTimeDly()` **之前**發生，否則排程器看到的還是舊的 deadline
-
-### 要做的事
-
-1. 確認 task 骨架中 deadline 更新的位置是否正確
-2. 在 `OS_Sched()` 插入 EDF 排程邏輯（結構參考 RM，欄位改為 `OSTCBDeadline`）
-3. 同樣需要處理優先權衝突問題
-
-### 驗證
-
-用 Input Example 2 驗證輸出序列是否符合 EDF（deadline 最近的先跑）。
+| 檔案 | 要做的事 |
+|------|----------|
+| `SOFTWARE/uCOS-II/SOURCE/uCOS_II.H` | 在 OS_EVENT struct 加入 `OSEventCeiling` 和 `OSEventOwner` 欄位 |
+| `SOFTWARE/uCOS-II/SOURCE/OS_SEM.C` | 修改 `OSSemPend()` 加 PCP 條件判斷與優先權繼承 |
+| `SOFTWARE/uCOS-II/SOURCE/OS_SEM.C` | 修改 `OSSemPost()` 加釋放後的優先權恢復 |
+| `SOFTWARE/uCOS-II/EX_PCP/BC45/SOURCE/TEST.C` | 設定 `SharedSem->OSEventCeiling` 的值 |
 
 ---
 
-## 五、組員 C 的工作（輸出格式 + PCP）
+### PCP 概念
 
-> **Branch 名稱：** `feature/output-pcp`
+多個 tasks 共用 semaphore 時，可能發生 **priority inversion（優先權反轉）**：
 
-### Part 1：輸出格式（Context Switch Log）
+> 低優先權 task L 持有 semaphore S → 高優先權 task H 來了想要 S → H 被迫等待 L → 中等優先權 task M 搶先執行，把 L 擠出去 → H 等更久
 
-**目標：** 讓程式在每次 context switch 時，輸出目前系統時間和切換前後的 task 資訊。
+PCP 的解法是「天花板協定」：
+1. 每個 semaphore 有一個 **ceiling** = 所有可能使用它的 tasks 中，優先權數字最小的那個（即優先權最高的使用者）
+2. Task T 要 lock semaphore 時，必須先確認：T 的優先權數字 **小於**（高於）所有「目前已被其他 task 持有的 semaphore」的 ceiling
+3. 若不符合，T 阻塞，持有 semaphore 的 task 必須**繼承** T 的優先權（避免 M 插隊）
 
-**要動的地方：** `os_core.c` 的 `OS_Sched()`
+uC/OS II 優先權：**數字越小 = 優先權越高**。
 
-找到判斷是否發生 context switch 的位置（當「下一個要執行的 task」和「目前執行中的 task」不同時），在切換**發生前**印出：
-- 目前系統時間（`OSTimeGet()`）
-- 切換前的 task ID
-- 切換後的 task ID
-
-輸出格式自訂，但要能清楚看出執行序列和切換時刻。
-
----
-
-### Part 2：PCP（Priority Ceiling Protocol）實作在 RM 上（+30%）
-
-#### PCP 概念
-
-PCP 解決多個 task 共用資源（semaphore）時可能發生的 **priority inversion（優先權反轉）** 問題。
-
-**核心規則：**
-1. 每個 semaphore 有一個 **priority ceiling** = 所有可能使用它的 task 中，優先權最高者的優先權數字
-2. Task T 要 lock 一個 semaphore 時，必須滿足：T 的優先權數字 **小於**（高於）所有「目前已被其他 task 鎖住的 semaphore」的 ceiling
-3. 若不滿足，T 阻塞，且持有最高 ceiling semaphore 的 task 必須**繼承** T 的優先權
-
-**要理解的問題：**
-- 為什麼 priority inversion 有害？（高優先權 task 被低優先權 task 間接卡住）
-- PCP 和 PIP 的差別是什麼？（PCP 是預防性的，PIP 是被動繼承）
-
-#### 需要動的地方
-
-**`ucos_ii.h` — `OS_EVENT` struct**  
-加入 `OSEventCeiling` 欄位，用來儲存這個 semaphore 的 priority ceiling 值。
-
-**`os_sem.c` — `OSSemPend()`**  
-在 task 嘗試 lock semaphore 之前，加入 PCP 的條件判斷：
-- 若 task 的優先權不符合條件，阻塞並觸發優先權繼承
-- 若符合條件，正常 lock 並記錄持有者
-
-**`os_sem.c` — `OSSemPost()`**  
-在 task 釋放 semaphore 後：
-- 恢復被繼承走的優先權（`OSTCBPrioOrg`）
-- 清除持有者記錄
-- 觸發重新排程
-
-#### 需要基礎架構配合的部分
-
-`OS_TCB` 裡的 `OSTCBPrioOrg` 欄位（基礎架構已加入），用於記錄 task 的原始優先權，讓 PCP 在釋放資源後能恢復回正確的值。
+以單一 semaphore 的情況，條件簡化為：  
+若 semaphore 已被其他 task 持有，且 `OSTCBCur->OSTCBPrio >= pevent->OSEventCeiling`（T 的優先權不高於 ceiling），則 T 阻塞。
 
 ---
 
-## 六、專題資料夾與修改位置
+### 你需要用到的欄位與函數
 
-基礎架構已完成，各組員只需修改自己的資料夾，**不需要動 git branch**。
+**OS_TCB 欄位（已存在）**
 
-| 資料夾 | 負責人 | 主要修改檔案 |
-|--------|--------|-------------|
-| `SOFTWARE/uCOS-II/EX_RM/BC45/SOURCE/` | 組員 A | `TEST.C` 已有骨架，修改 `OS_CORE.C`（見下方說明） |
-| `SOFTWARE/uCOS-II/EX_EDF/BC45/SOURCE/` | 組員 B | `TEST.C` 已有骨架，`SCHED_EDF` 已定義，修改 `OS_CORE.C` |
-| `SOFTWARE/uCOS-II/EX_PCP/BC45/SOURCE/` | 組員 C | `TEST.C` 已有骨架（含 semaphore），修改 `OS_SEM.C` |
+| 欄位 | 說明 |
+|------|------|
+| `OSTCBPrio` | task 目前的優先權數字 |
+| `OSTCBPrioOrg` | task 原始優先權（基礎架構已加入，用於恢復） |
+| `OSTCBStat` | task 狀態，`OS_STAT_RDY` = 就緒 |
 
-### 共用原始碼（已完成，不需再動）
+**OS_EVENT 欄位（你要加入的）**
 
-| 檔案 | 已修改內容 |
-|------|-----------|
-| `SOFTWARE/uCOS-II/SOURCE/uCOS_II.H` | OS_TCB 新增 `OSTCBPeriod`、`OSTCBExecTime`、`OSTCBDeadline`、`OSTCBPrioOrg` |
-| `SOFTWARE/uCOS-II/SOURCE/OS_TASK.C` | `OSTaskCreateExt()` 新增 `period`、`exec_time` 兩個參數 |
-| `SOFTWARE/uCOS-II/SOURCE/OS_CORE.C` | `OS_Sched()` 已加入 EDF 排程邏輯（`#ifdef SCHED_EDF` 區塊） |
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `OSEventCeiling` | INT8U | 此 semaphore 的 priority ceiling |
+| `OSEventOwner` | `OS_TCB *` | 目前持有此 semaphore 的 task |
 
-### 組員 A — RM 排程器
+**函數**
 
-**你的 TEST.C 已經寫好**，RM 邏輯（依 period 排序並分配靜態優先權）已在 `TaskStartCreateTasks()` 完成。  
-你的主要任務是**閱讀並理解程式碼**，然後驗證輸出是否符合 RM 規則。
+| 函數 | 說明 |
+|------|------|
+| `OSTaskChangePrio(oldprio, newprio)` | 動態修改某個 task 的優先權 |
+| `OSTCBPrioTbl[prio]` | 以優先權數字為 index，取得對應的 TCB 指標 |
+| `OS_Sched()` | 觸發重新排程 |
 
-如果想進一步理解排程細節，可以閱讀 `SOFTWARE/uCOS-II/SOURCE/OS_CORE.C` 中的 `OS_Sched()` 函數。
+---
 
-### 組員 B — EDF 排程器
+### 步驟 1：在 uCOS_II.H 加入欄位
 
-**`SCHED_EDF` 已在 `EX_EDF/BC45/SOURCE/OS_CFG.H` 定義**，OS_CORE.C 的 EDF 邏輯已啟用。  
-**你的 TEST.C 已寫好**，包含 deadline 更新邏輯（`OSTCBDeadline += OSTCBPeriod`，在 `OSTimeDly` 之前）。  
-主要任務是閱讀 `OS_CORE.C` 中的 EDF 區塊，理解它如何找 earliest deadline 並切換優先權，然後驗證輸出。
+搜尋 `typedef struct os_event`，在 struct 裡加入：
 
-### 組員 C — 輸出 Log + PCP
-
-**`EX_PCP/TEST.C` 已寫好** RM 骨架和 semaphore 的 pend/post 框架。  
-你需要修改的是 `SOFTWARE/uCOS-II/SOURCE/OS_SEM.C`：
-- `OSSemPend()`：加入 PCP 條件檢查和優先權繼承
-- `OSSemPost()`：加入釋放後的優先權恢復
-
-另外在 `EX_PCP/TEST.C` 的 `TaskStartCreateTasks()` 裡，設定 semaphore ceiling：
 ```c
-SharedSem->OSEventCeiling = 1;   /* = highest-priority task that uses this sem */
-```
-
-還需要在 `uCOS_II.H` 的 `OS_EVENT` struct 加入 `OSEventCeiling` 欄位（見 WORKPLAN 第五章）。
-
-## 七、Git 使用方式
-
-```
-main
-├── feature/rm           ← 組員 A（等基礎架構 merge 到 main 後才開）
-├── feature/edf          ← 組員 B（等基礎架構 merge 到 main 後才開）
-└── feature/output-pcp   ← 組員 C（可與 rm/edf 同時進行）
-```
-
-**流程：**
-1. 基礎架構完成 → merge 到 main
-2. 各組員從 main 開 branch 開始工作
-3. 各自完成後發 PR，由基礎架構的人 review 並 merge
-4. 最後整合測試
-
-```bash
-git checkout main
-git pull
-git checkout -b feature/rm    # 組員 A 執行這行
+INT8U     OSEventCeiling;  /* PCP: ceiling priority of this semaphore */
+OS_TCB   *OSEventOwner;    /* PCP: TCB of task currently holding this semaphore */
 ```
 
 ---
 
-## 七、報告大綱（截止 2026/06/08）
+### 步驟 2：修改 OSSemPend()
 
-格式：4頁 A4、12pt、含所有人姓名與學號
+位置：`SOFTWARE/uCOS-II/SOURCE/OS_SEM.C`
+
+找到 `OSSemPend()` 函數。在函數進入後（取得 critical section 之後），原本判斷 semaphore count > 0 就 lock 的地方之前，加入 PCP 條件判斷：
+
+**邏輯流程：**
+
+```
+semaphore count > 0（可以 lock）？
+  ├─ 是：正常 lock，記錄持有者：pevent->OSEventOwner = OSTCBCur
+  └─ 否：semaphore 已被其他 task 持有
+         ↓
+         PCP 條件：OSTCBCur->OSTCBPrio >= pevent->OSEventCeiling？
+           ├─ 是（T 的優先權不夠高）：
+           │     找到持有者 pevent->OSEventOwner
+           │     若持有者優先權低於 T：OSTaskChangePrio(持有者目前優先權, OSTCBCur->OSTCBPrio)
+           │     讓 T 進入 waiting 狀態（參考原本程式碼的阻塞處理）
+           │     呼叫 OS_Sched()
+           └─ 否（T 優先權夠高）：正常等待，不繼承
+```
+
+---
+
+### 步驟 3：修改 OSSemPost()
+
+位置同上。找到 `OSSemPost()` 函數。
+
+在成功 post（遞增 count 或喚醒等待 task）之後，加入優先權恢復：
+
+```
+若 pevent->OSEventOwner 不為 NULL
+  且 OSEventOwner->OSTCBPrio != OSEventOwner->OSTCBPrioOrg（優先權曾被提升）
+    ↓
+    OSTaskChangePrio(OSEventOwner->OSTCBPrio, OSEventOwner->OSTCBPrioOrg)
+    pevent->OSEventOwner = (OS_TCB *)0
+```
+
+---
+
+### 步驟 4：在 TEST.C 設定 ceiling
+
+位置：`SOFTWARE/uCOS-II/EX_PCP/BC45/SOURCE/TEST.C`，`TaskStartCreateTasks()` 函數
+
+找到這行：
+```c
+SharedSem = OSSemCreate(1);
+/* TEAMMATE C: SharedSem->OSEventCeiling = 1; */
+```
+
+把 comment 拿掉，改成：
+```c
+SharedSem = OSSemCreate(1);
+SharedSem->OSEventCeiling = 1;   /* = priority of the highest-prio task using this sem */
+SharedSem->OSEventOwner   = (OS_TCB *)0;
+```
+
+Ceiling = 1 代表使用這個 semaphore 的 tasks 中，最高優先權的是 priority 1。
+
+---
+
+### 編譯與執行
+
+1. 把 `SOFTWARE` 資料夾複製到虛擬機 `C:\`
+2. 進入 `C:\SOFTWARE\uCOS-II\EX_PCP\BC45\TEST\`，執行 `MAKETEST.BAT`
+3. 執行 `TEST.EXE`
+
+### 驗證
+
+高優先權 task 被低優先權 task 的 semaphore 阻擋時，應觀察到低優先權 task 被提升優先權（輸出會顯示優先權變化），而不是讓中等優先權 task 插隊執行。
+
+---
+
+## 四、報告大綱（截止 2026/06/08 23:00）
+
+格式：4 頁 A4、12pt、含所有人姓名與學號
 
 建議章節：
 1. **系統架構**：修改了哪些檔案、各模組關係圖
-2. **RM 實作**：流程圖 + OS_Sched() 修改說明
-3. **EDF 實作**：流程圖 + deadline 更新機制說明
-4. **PCP 實作**（加分題）：PCP 規則說明 + 實作細節
-5. **測試結果**：輸出截圖 + 是否符合預期
+2. **RM 實作**：流程圖 + 靜態優先權分配說明
+3. **EDF 實作**：流程圖 + deadline 更新機制 + OS_Sched() 修改說明
+4. **PCP 實作**（加分題）：PCP 規則 + OSSemPend/OSSemPost 修改細節
+5. **測試結果**：輸出截圖 + 符合預期的說明
