@@ -876,6 +876,45 @@ void  OS_Sched (void)
 
     OS_ENTER_CRITICAL();
     if ((OSIntNesting == 0) && (OSLockNesting == 0)) { /* Sched. only if all ISRs done & not locked    */
+
+#ifdef SCHED_EDF
+        /* EDF: find ready app task with earliest absolute deadline, give it priority 1 */
+        {
+            OS_TCB *ptcb;
+            OS_TCB *best   = (OS_TCB *)0;
+            INT32U  min_dl = 0xFFFFFFFFl;
+
+            ptcb = OSTCBList;
+            while (ptcb != (OS_TCB *)0) {
+                if (ptcb->OSTCBStat  == OS_STAT_RDY &&
+                    ptcb->OSTCBPrio  != OS_IDLE_PRIO &&
+                    ptcb->OSTCBPrio  != OS_STAT_PRIO &&
+                    ptcb->OSTCBPeriod > 0) {
+                    if (ptcb->OSTCBDeadline < min_dl) {
+                        min_dl = ptcb->OSTCBDeadline;
+                        best   = ptcb;
+                    }
+                }
+                ptcb = ptcb->OSTCBNext;
+            }
+
+            if (best != (OS_TCB *)0 && best->OSTCBPrio != 1) {
+                /* Move whoever currently holds priority 1 back to its original priority */
+                if (OSTCBPrioTbl[1] != (OS_TCB *)0 &&
+                    OSTCBPrioTbl[1] != (OS_TCB *)1) {
+                    OS_TCB *cur_p1 = OSTCBPrioTbl[1];
+                    OS_EXIT_CRITICAL();
+                    OSTaskChangePrio(1, cur_p1->OSTCBPrioOrg);
+                    OS_ENTER_CRITICAL();
+                }
+                /* Give best task priority 1 */
+                OS_EXIT_CRITICAL();
+                OSTaskChangePrio(best->OSTCBPrio, 1);
+                OS_ENTER_CRITICAL();
+            }
+        }
+#endif /* SCHED_EDF */
+
         y             = OSUnMapTbl[OSRdyGrp];          /* Get pointer to HPT ready to run              */
         OSPrioHighRdy = (INT8U)((y << 3) + OSUnMapTbl[OSRdyTbl[y]]);
         if (OSPrioHighRdy != OSPrioCur) {              /* No Ctx Sw if current task is highest rdy     */
