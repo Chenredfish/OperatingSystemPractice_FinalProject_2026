@@ -248,7 +248,52 @@ PCP 解決多個 task 共用資源（semaphore）時可能發生的 **priority i
 
 ---
 
-## 六、Git 分支策略
+## 六、專題資料夾與修改位置
+
+基礎架構已完成，各組員只需修改自己的資料夾，**不需要動 git branch**。
+
+| 資料夾 | 負責人 | 主要修改檔案 |
+|--------|--------|-------------|
+| `SOFTWARE/uCOS-II/EX_RM/BC45/SOURCE/` | 組員 A | `TEST.C` 已有骨架，修改 `OS_CORE.C`（見下方說明） |
+| `SOFTWARE/uCOS-II/EX_EDF/BC45/SOURCE/` | 組員 B | `TEST.C` 已有骨架，`SCHED_EDF` 已定義，修改 `OS_CORE.C` |
+| `SOFTWARE/uCOS-II/EX_PCP/BC45/SOURCE/` | 組員 C | `TEST.C` 已有骨架（含 semaphore），修改 `OS_SEM.C` |
+
+### 共用原始碼（已完成，不需再動）
+
+| 檔案 | 已修改內容 |
+|------|-----------|
+| `SOFTWARE/uCOS-II/SOURCE/uCOS_II.H` | OS_TCB 新增 `OSTCBPeriod`、`OSTCBExecTime`、`OSTCBDeadline`、`OSTCBPrioOrg` |
+| `SOFTWARE/uCOS-II/SOURCE/OS_TASK.C` | `OSTaskCreateExt()` 新增 `period`、`exec_time` 兩個參數 |
+| `SOFTWARE/uCOS-II/SOURCE/OS_CORE.C` | `OS_Sched()` 已加入 EDF 排程邏輯（`#ifdef SCHED_EDF` 區塊） |
+
+### 組員 A — RM 排程器
+
+**你的 TEST.C 已經寫好**，RM 邏輯（依 period 排序並分配靜態優先權）已在 `TaskStartCreateTasks()` 完成。  
+你的主要任務是**閱讀並理解程式碼**，然後驗證輸出是否符合 RM 規則。
+
+如果想進一步理解排程細節，可以閱讀 `SOFTWARE/uCOS-II/SOURCE/OS_CORE.C` 中的 `OS_Sched()` 函數。
+
+### 組員 B — EDF 排程器
+
+**`SCHED_EDF` 已在 `EX_EDF/BC45/SOURCE/OS_CFG.H` 定義**，OS_CORE.C 的 EDF 邏輯已啟用。  
+**你的 TEST.C 已寫好**，包含 deadline 更新邏輯（`OSTCBDeadline += OSTCBPeriod`，在 `OSTimeDly` 之前）。  
+主要任務是閱讀 `OS_CORE.C` 中的 EDF 區塊，理解它如何找 earliest deadline 並切換優先權，然後驗證輸出。
+
+### 組員 C — 輸出 Log + PCP
+
+**`EX_PCP/TEST.C` 已寫好** RM 骨架和 semaphore 的 pend/post 框架。  
+你需要修改的是 `SOFTWARE/uCOS-II/SOURCE/OS_SEM.C`：
+- `OSSemPend()`：加入 PCP 條件檢查和優先權繼承
+- `OSSemPost()`：加入釋放後的優先權恢復
+
+另外在 `EX_PCP/TEST.C` 的 `TaskStartCreateTasks()` 裡，設定 semaphore ceiling：
+```c
+SharedSem->OSEventCeiling = 1;   /* = highest-priority task that uses this sem */
+```
+
+還需要在 `uCOS_II.H` 的 `OS_EVENT` struct 加入 `OSEventCeiling` 欄位（見 WORKPLAN 第五章）。
+
+## 七、Git 使用方式
 
 ```
 main
