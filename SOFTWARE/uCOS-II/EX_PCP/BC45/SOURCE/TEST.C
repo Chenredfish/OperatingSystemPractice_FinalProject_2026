@@ -187,18 +187,30 @@ static  void  TaskStartCreateTasks (void)
 void  PeriodicTask (void *pdata)
 {
     INT32U  start_tick;
+    INT32U  end_tick;
     INT32U  elapsed;
     INT32U  delay_ticks;
     INT8U   task_id;
     INT8U   err;
+    INT16U  run_count;
     char    s[80];
     int     row;
 
-    task_id = (INT8U)(INT32U)pdata;
-    row     = 13 + (int)task_id;
+    task_id   = (INT8U)(INT32U)pdata;
+    row       = 11 + (int)task_id;
+    run_count = 0;
 
     for (;;) {
         start_tick = OSTimeGet();
+        run_count++;
+
+        /* Print start time BEFORE execution (= context switch time) */
+        sprintf(s, "Task%d  start=%4lds  end=----s  period=%4lds  #%3d",
+                (int)task_id,
+                start_tick / OS_TICKS_PER_SEC,
+                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
+                (int)run_count);
+        PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
 
         OSSemPend(SharedSem, 0, &err);
 
@@ -208,12 +220,16 @@ void  PeriodicTask (void *pdata)
 
         OSSemPost(SharedSem);
 
-        elapsed = OSTimeGet() - start_tick;
+        end_tick = OSTimeGet();
+        elapsed  = end_tick - start_tick;
 
-        sprintf(s, "[t=%4lds] Task%d ran  exec=%lds period=%lds",
-                OSTimeGet()/OS_TICKS_PER_SEC, (int)task_id,
-                OSTCBCur->OSTCBExecTime/OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBPeriod/OS_TICKS_PER_SEC);
+        /* Fill in end time AFTER execution */
+        sprintf(s, "Task%d  start=%4lds  end=%4lds  period=%4lds  #%3d",
+                (int)task_id,
+                start_tick / OS_TICKS_PER_SEC,
+                end_tick / OS_TICKS_PER_SEC,
+                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
+                (int)run_count);
         PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
 
         delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
@@ -234,6 +250,8 @@ static  void  TaskStartDispInit (void)
     PC_DispStr(0,  0, "       uC/OS-II  --  RM + PCP (Bonus)  --  OS Practice Final Project        ",
                DISP_FGND_WHITE + DISP_BGND_RED);
     PC_DispStr(0,  2, "Scheduler: RM  |  Bonus: Priority Ceiling Protocol on shared resource",
+               DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr(0,  9, "--- Runtime: start=context-switch  end=task-completed (all in seconds) ---",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr(0, 24, "                         <-- PRESS ESC TO QUIT -->                          ",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY + DISP_BLINK);
