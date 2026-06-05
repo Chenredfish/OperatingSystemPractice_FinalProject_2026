@@ -266,7 +266,7 @@ void  OSSemPend (OS_EVENT *pevent, INT16U timeout, INT8U *err)
     if (pevent->OSEventCnt > 0) {                     /* If sem. is positive, resource available ...   */
         pevent->OSEventCnt--;                         /* ... decrement semaphore only if positive.     */
         /* TODO (組員 C): PCP -- 記錄 semaphore 持有者
-         *   pevent->OSEventOwner = OSTCBCur;
+         *   pevent->OSEventOwner = (void *)OSTCBCur;
          */
         OS_EXIT_CRITICAL();
         *err = OS_NO_ERR;
@@ -277,7 +277,7 @@ void  OSSemPend (OS_EVENT *pevent, INT16U timeout, INT8U *err)
      * 條件判斷（OSTCBCur 是要求進入的 task T）：
      *   if (OSTCBCur->OSTCBPrio >= pevent->OSEventCeiling) {
      *       // T 的優先權不夠高，觸發優先權繼承
-     *       OS_TCB *owner = pevent->OSEventOwner;
+     *       OS_TCB *owner = (OS_TCB *)pevent->OSEventOwner;
      *       if (owner != (OS_TCB *)0 && owner->OSTCBPrio > OSTCBCur->OSTCBPrio) {
      *           OS_EXIT_CRITICAL();
      *           OSTaskChangePrio(owner->OSTCBPrio, OSTCBCur->OSTCBPrio);
@@ -340,14 +340,14 @@ INT8U  OSSemPost (OS_EVENT *pevent)
     OS_ENTER_CRITICAL();
     /* TODO (組員 C): PCP -- 釋放 semaphore 前，恢復持有者的原始優先權
      *
-     *   if (pevent->OSEventOwner != (OS_TCB *)0 &&
-     *       pevent->OSEventOwner->OSTCBPrio != pevent->OSEventOwner->OSTCBPrioOrg) {
+     *   OS_TCB *owner = (OS_TCB *)pevent->OSEventOwner;
+     *   if (owner != (OS_TCB *)0 &&
+     *       owner->OSTCBPrio != owner->OSTCBPrioOrg) {
      *       OS_EXIT_CRITICAL();
-     *       OSTaskChangePrio(pevent->OSEventOwner->OSTCBPrio,
-     *                        pevent->OSEventOwner->OSTCBPrioOrg);
+     *       OSTaskChangePrio(owner->OSTCBPrio, owner->OSTCBPrioOrg);
      *       OS_ENTER_CRITICAL();
      *   }
-     *   pevent->OSEventOwner = (OS_TCB *)0;
+     *   pevent->OSEventOwner = (void *)0;
      */
     if (pevent->OSEventGrp != 0x00) {                      /* See if any task waiting for semaphore    */
         OS_EventTaskRdy(pevent, (void *)0, OS_STAT_SEM);   /* Ready highest prio task waiting on event */

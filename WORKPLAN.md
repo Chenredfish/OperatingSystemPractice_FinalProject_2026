@@ -274,7 +274,7 @@ uC/OS II 優先權：**數字越小 = 優先權越高**。
 | 欄位 | 型別 | 說明 |
 |------|------|------|
 | `OSEventCeiling` | INT8U | 此 semaphore 的 priority ceiling |
-| `OSEventOwner` | `OS_TCB *` | 目前持有此 semaphore 的 task |
+| `OSEventOwner` | `void *` | 目前持有此 semaphore 的 task（使用前 cast 成 `OS_TCB *`） |
 
 **函數**
 
@@ -292,8 +292,10 @@ uC/OS II 優先權：**數字越小 = 優先權越高**。
 
 ```c
 INT8U     OSEventCeiling;  /* PCP: ceiling priority of this semaphore */
-OS_TCB   *OSEventOwner;    /* PCP: TCB of task currently holding this semaphore */
+void     *OSEventOwner;    /* PCP: TCB of task currently holding this semaphore (void* to avoid forward-decl issue) */
 ```
+
+> **注意**：這裡必須用 `void *` 而不是 `OS_TCB *`，因為 OS_EVENT 在檔案中比 OS_TCB 更早定義，此時 `OS_TCB` 這個型別還不存在。在 OS_SEM.C 裡使用時再 cast：`OS_TCB *owner = (OS_TCB *)pevent->OSEventOwner;`
 
 ---
 
