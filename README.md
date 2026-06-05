@@ -53,3 +53,16 @@ OS_TCB struct 加入 `OSTCBPeriod`、`OSTCBExecTime`、`OSTCBDeadline`、`OSTCBP
 | `SOFTWARE/uCOS-II/SOURCE/` | 共用核心原始碼（已修改） |
 | `EX_*/BC45/SOURCE/TEST.C` | 各組員需要填入的骨架程式 |
 | `EX_*/BC45/TEST/taskset.txt` | 測試用任務參數（3 tasks，利用率 50%） |
+
+---
+
+## 與老師範例的差異（`ShareToVM/`）
+
+| 項目 | 老師範例 | 本專題 |
+|------|----------|--------|
+| **TCB 資料儲存** | 用 `OSTCBExtPtr` 指向自訂 `TASK_EXTRA_DATA` struct，不修改 OS_TCB | 直接在 OS_TCB 加入新欄位，並擴充 `OSTaskCreateExt` 簽名接收 period / exec_time |
+| **執行時間計算** | `OSTimeTick()` 每 tick 遞減 `RemainTime`，task 忙碌等待檢查 `RemainTime <= 0` | 用 `OSTimeGet()` 計算差值：`while ((OSTimeGet() - start_tick) < OSTCBExecTime)` |
+| **輸入檔名** | `Input.txt` | `taskset.txt` |
+| **RM 排序** | 未實作（骨架，留給學生） | 用 bubble sort 依 period 升序排列，分配優先權 1, 2, 3... |
+| **EDF 排程邏輯** | 未實作（骨架，留給學生） | 在 `OS_Sched()` 的 `#ifdef SCHED_EDF` 區塊走訪 TCB 串列，動態覆寫最小 deadline task 的優先權為 1 |
+| **輸出格式** | 每個 task 用固定欄位分別更新 Start Time 和 End Time（同一列原地更新） | 每次執行印兩次同一列：忙碌等待前填 `start=`（context switch 時刻），結束後填 `end=`（完成時刻） |
