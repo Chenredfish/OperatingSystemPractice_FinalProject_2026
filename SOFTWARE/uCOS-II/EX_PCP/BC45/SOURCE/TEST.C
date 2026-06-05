@@ -133,6 +133,8 @@ static  void  TaskStartCreateTasks (void)
     fscanf(fp, "%d", &TaskCount);
     for (i = 0; i < TaskCount; i++) {
         fscanf(fp, "%ld %ld", &TaskExecTime[i], &TaskPeriod[i]);
+        TaskExecTime[i] *= OS_TICKS_PER_SEC;
+        TaskPeriod[i]   *= OS_TICKS_PER_SEC;
     }
     fclose(fp);
 
@@ -160,7 +162,9 @@ static  void  TaskStartCreateTasks (void)
             TaskPeriod[i],
             TaskExecTime[i]
         );
-        sprintf(s, "Task%d: exec=%ld period=%ld prio=%d", (int)(i+1), TaskExecTime[i], TaskPeriod[i], (int)prio);
+        sprintf(s, "Task%d: exec=%lds period=%lds prio=%d",
+                (int)(i+1), TaskExecTime[i]/OS_TICKS_PER_SEC,
+                TaskPeriod[i]/OS_TICKS_PER_SEC, (int)prio);
         PC_DispStr(0, 5 + i, s, DISP_FGND_WHITE + DISP_BGND_BLACK);
     }
 
@@ -206,8 +210,10 @@ void  PeriodicTask (void *pdata)
 
         elapsed = OSTimeGet() - start_tick;
 
-        sprintf(s, "[t=%4ld] Task%d ran  exec=%ld period=%ld",
-                OSTimeGet(), (int)task_id, OSTCBCur->OSTCBExecTime, OSTCBCur->OSTCBPeriod);
+        sprintf(s, "[t=%4lds] Task%d ran  exec=%lds period=%lds",
+                OSTimeGet()/OS_TICKS_PER_SEC, (int)task_id,
+                OSTCBCur->OSTCBExecTime/OS_TICKS_PER_SEC,
+                OSTCBCur->OSTCBPeriod/OS_TICKS_PER_SEC);
         PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
 
         delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
