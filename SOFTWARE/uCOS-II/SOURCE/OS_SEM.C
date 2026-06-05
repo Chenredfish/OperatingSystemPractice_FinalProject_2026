@@ -265,10 +265,27 @@ void  OSSemPend (OS_EVENT *pevent, INT16U timeout, INT8U *err)
     OS_ENTER_CRITICAL();
     if (pevent->OSEventCnt > 0) {                     /* If sem. is positive, resource available ...   */
         pevent->OSEventCnt--;                         /* ... decrement semaphore only if positive.     */
+        /* TODO (組員 C): PCP -- 記錄 semaphore 持有者
+         *   pevent->OSEventOwner = OSTCBCur;
+         */
         OS_EXIT_CRITICAL();
         *err = OS_NO_ERR;
         return;
     }
+    /* TODO (組員 C): PCP -- semaphore 已被佔用，進行優先權繼承
+     *
+     * 條件判斷（OSTCBCur 是要求進入的 task T）：
+     *   if (OSTCBCur->OSTCBPrio >= pevent->OSEventCeiling) {
+     *       // T 的優先權不夠高，觸發優先權繼承
+     *       OS_TCB *owner = pevent->OSEventOwner;
+     *       if (owner != (OS_TCB *)0 && owner->OSTCBPrio > OSTCBCur->OSTCBPrio) {
+     *           OS_EXIT_CRITICAL();
+     *           OSTaskChangePrio(owner->OSTCBPrio, OSTCBCur->OSTCBPrio);
+     *           OS_ENTER_CRITICAL();
+     *       }
+     *   }
+     * 之後繼續執行下面的 waiting 邏輯（不需要額外 return）。
+     */
                                                       /* Otherwise, must wait until event occurs       */
     OSTCBCur->OSTCBStat |= OS_STAT_SEM;               /* Resource not available, pend on semaphore     */
     OSTCBCur->OSTCBDly   = timeout;                   /* Store pend timeout in TCB                     */
@@ -321,6 +338,17 @@ INT8U  OSSemPost (OS_EVENT *pevent)
     }
 #endif
     OS_ENTER_CRITICAL();
+    /* TODO (組員 C): PCP -- 釋放 semaphore 前，恢復持有者的原始優先權
+     *
+     *   if (pevent->OSEventOwner != (OS_TCB *)0 &&
+     *       pevent->OSEventOwner->OSTCBPrio != pevent->OSEventOwner->OSTCBPrioOrg) {
+     *       OS_EXIT_CRITICAL();
+     *       OSTaskChangePrio(pevent->OSEventOwner->OSTCBPrio,
+     *                        pevent->OSEventOwner->OSTCBPrioOrg);
+     *       OS_ENTER_CRITICAL();
+     *   }
+     *   pevent->OSEventOwner = (OS_TCB *)0;
+     */
     if (pevent->OSEventGrp != 0x00) {                      /* See if any task waiting for semaphore    */
         OS_EventTaskRdy(pevent, (void *)0, OS_STAT_SEM);   /* Ready highest prio task waiting on event */
         OS_EXIT_CRITICAL();

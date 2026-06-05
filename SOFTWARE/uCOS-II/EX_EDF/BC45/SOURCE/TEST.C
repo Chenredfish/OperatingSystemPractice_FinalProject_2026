@@ -5,14 +5,13 @@
 *
 *                             OS Practice Final Project -- EDF Scheduler
 *
-* Description: Reads taskset.txt, creates periodic tasks, and schedules them
-*              using Earliest Deadline First (EDF).
+* Description: Reads taskset.txt, creates periodic tasks, and demonstrates
+*              Earliest Deadline First (EDF) scheduling.
 *              OS_Sched() (modified via #define SCHED_EDF in OS_CFG.H) dynamically
 *              assigns priority 1 to the ready task with the earliest absolute deadline.
-*              Each task must update its own OSTCBDeadline before sleeping.
 *
-* TODO (Teammate B): Implement TaskStartCreateTasks() and PeriodicTask().
-*   See WORKPLAN.md Section IV for details and hints.
+* Teammate B implements the EDF scheduler logic in:
+*   SOFTWARE/uCOS-II/SOURCE/OS_CORE.C  (inside #ifdef SCHED_EDF block in OS_Sched())
 *********************************************************************************************************
 */
 
@@ -26,7 +25,7 @@
 
 #define  TASK_STK_SIZE   512
 #define  MAX_TASKS         7
-#define  BASE_PRIO        10    /* App tasks start at this priority; EDF will give prio 1 dynamically */
+#define  BASE_PRIO        10    /* App tasks start at this priority; EDF gives prio 1 dynamically */
 
 /*
 *********************************************************************************************************
@@ -110,15 +109,9 @@ void  TaskStart (void *pdata)
 *********************************************************************************************************
 *                                       READ TASKSET AND CREATE TASKS
 *
-* EDF does NOT need tasks sorted by period at creation time.
-* Assign priorities BASE_PRIO, BASE_PRIO+1, BASE_PRIO+2, ... (just stable slots).
+* EDF does NOT need tasks sorted by period.
+* Assign stable priorities BASE_PRIO, BASE_PRIO+1, BASE_PRIO+2, ...
 * OS_Sched() will dynamically promote the earliest-deadline ready task to priority 1.
-*
-* Steps:
-*   1. Open "taskset.txt", read TaskCount, then read (exec_time, period) for each task.
-*   2. Call OSTaskCreateExt() for each task, assigning priority BASE_PRIO+i.
-*      Pass TaskPeriod[i] and TaskExecTime[i] as the last two arguments (period, exec_time).
-*   3. No sorting needed.
 *********************************************************************************************************
 */
 
@@ -141,27 +134,33 @@ static  void  TaskStartCreateTasks (void)
     }
     fclose(fp);
 
-    /* TODO: For each task i, assign prio = BASE_PRIO + i, then call OSTaskCreateExt() */
-    /*       Pass PeriodicTask as task function, (void*)(i+1) as pdata                 */
-    /*       Pass TaskPeriod[i] and TaskExecTime[i] as the last two arguments           */
-    /*       Display each task's info with PC_DispStr at row 5+i                        */
-    /*       No sorting -- EDF scheduler dynamically picks the earliest deadline task   */
+    for (i = 0; i < TaskCount; i++) {
+        prio = (INT8U)(BASE_PRIO + i);
+        OSTaskCreateExt(
+            PeriodicTask,
+            (void *)(INT32U)(i + 1),
+            &TaskStk[i][TASK_STK_SIZE - 1],
+            prio,
+            prio,
+            &TaskStk[i][0],
+            TASK_STK_SIZE,
+            (void *)0,
+            OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,
+            TaskPeriod[i],
+            TaskExecTime[i]
+        );
+        sprintf(s, "Task%d: exec=%ld  period=%ld  prio=%d",
+                (int)(i+1), TaskExecTime[i], TaskPeriod[i], (int)prio);
+        PC_DispStr(0, 5 + i, s, DISP_FGND_WHITE + DISP_BGND_BLACK);
+    }
 }
 
 /*
 *********************************************************************************************************
 *                                           PERIODIC TASK BODY
 *
-* Each task should:
-*   1. Record the current tick as start_tick (use OSTimeGet()).
-*   2. Busy-wait until (OSTimeGet() - start_tick) >= OSTCBCur->OSTCBExecTime.
-*   3. Display which task ran and its current deadline.
-*   4. IMPORTANT: Update OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod
-*      This MUST happen BEFORE OSTimeDly() -- the scheduler reads this value on next wakeup.
-*   5. Calculate remaining time in the period and call OSTimeDly().
-*
-* The deadline update in step 4 is what makes EDF work correctly across periods.
-* Access the current task's TCB fields via OSTCBCur->OSTCBDeadline, OSTCBCur->OSTCBPeriod, etc.
+* Each task busy-waits for its exec_time, then updates its deadline and sleeps.
+* OSTCBDeadline MUST be updated BEFORE OSTimeDly() -- the scheduler reads it on next wakeup.
 *********************************************************************************************************
 */
 
@@ -178,18 +177,25 @@ void  PeriodicTask (void *pdata)
     row     = 13 + (int)task_id;
 
     for (;;) {
-        /* TODO: start_tick = OSTimeGet(); */
+        start_tick = OSTimeGet();
 
-        /* TODO: busy-wait loop for OSTCBCur->OSTCBExecTime ticks */
+        while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) {
+            ;
+        }
 
-        /* TODO: elapsed = OSTimeGet() - start_tick; */
+        elapsed = OSTimeGet() - start_tick;
 
-        /* TODO: display task execution info (include OSTCBDeadline in output) */
+        sprintf(s, "[t=%4ld] Task%d  deadline=%ld  period=%ld",
+                OSTimeGet(), (int)task_id,
+                OSTCBCur->OSTCBDeadline, OSTCBCur->OSTCBPeriod);
+        PC_DispStr(0, row, s, DISP_FGND_CYAN + DISP_BGND_BLACK);
 
-        /* TODO: OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;  <-- MUST be before OSTimeDly */
+        OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;  /* must be before OSTimeDly */
 
-        /* TODO: delay_ticks = OSTCBCur->OSTCBPeriod - elapsed; */
-        /* TODO: if delay_ticks > 0, call OSTimeDly((INT16U)delay_ticks); */
+        delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
+        if ((INT32S)delay_ticks > 0) {
+            OSTimeDly((INT16U)delay_ticks);
+        }
     }
 }
 

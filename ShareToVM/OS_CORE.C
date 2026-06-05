@@ -17,6 +17,20 @@
 #include "includes.h"
 #endif
 
+
+
+/* Che-Wei: We need to define the data type again to use it ********************************************/
+#define          PERIODIC_TASK_START_PRIO    20 
+
+typedef struct {
+    INT32U  RemainTime;
+    INT32U  ExecutionTime;
+    INT32U  Period;
+    INT32U  Deadline;
+} TASK_EXTRA_DATA;
+/*******************************************************************************************************/
+
+
 /*
 *********************************************************************************************************
 *                              MAPPING TABLE TO MAP BIT POSITION TO BIT MASK
@@ -363,11 +377,15 @@ void  OSStatInit (void)
 
 void  OSTimeTick (void)
 {
+
+/* Che-Wei: We need to know the data type***************************************************************/
+TASK_EXTRA_DATA *MyPtr; 
+/*******************************************************************************************************/
+
 #if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
     OS_CPU_SR  cpu_sr;
 #endif    
     OS_TCB    *ptcb;
-
 
     OSTimeTickHook();                                      /* Call user definable hook                 */
 #if OS_TIME_GET_SET_EN > 0   
@@ -375,6 +393,14 @@ void  OSTimeTick (void)
     OSTime++;
     OS_EXIT_CRITICAL();
 #endif
+
+/* Che-Wei: Decrease the remaining execution time of the current task**********************************/
+    if((OSPrioCur >= PERIODIC_TASK_START_PRIO )&&(OSPrioCur <=  PERIODIC_TASK_START_PRIO+7))
+    {    
+	MyPtr = OSTCBCur->OSTCBExtPtr;
+	if(MyPtr->RemainTime > 0) {MyPtr->RemainTime--;}
+    }
+/*******************************************************************************************************/
     if (OSRunning == TRUE) {    
         ptcb = OSTCBList;                                  /* Point at first TCB in TCB list           */
         while (ptcb->OSTCBPrio != OS_IDLE_PRIO) {          /* Go through all TCBs in TCB list          */
@@ -733,8 +759,7 @@ static  void  OS_InitTaskIdle (void)
                           &OSTaskIdleStk[0],                         /* Set Bottom-Of-Stack                  */
                           OS_TASK_IDLE_STK_SIZE,
                           (void *)0,                                 /* No TCB extension                     */
-                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,/* Enable stack checking + clear stack  */
-                          0, 0);                                     /* period=0, exec_time=0 (system task)  */
+                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);/* Enable stack checking + clear stack  */
     #else
     (void)OSTaskCreateExt(OS_TaskIdle,
                           (void *)0,                                 /* No arguments passed to OS_TaskIdle() */
@@ -744,8 +769,7 @@ static  void  OS_InitTaskIdle (void)
                           &OSTaskIdleStk[OS_TASK_IDLE_STK_SIZE - 1], /* Set Bottom-Of-Stack                  */
                           OS_TASK_IDLE_STK_SIZE,
                           (void *)0,                                 /* No TCB extension                     */
-                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,/* Enable stack checking + clear stack  */
-                          0, 0);                                     /* period=0, exec_time=0 (system task)  */
+                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);/* Enable stack checking + clear stack  */
     #endif
 #else
     #if OS_STK_GROWTH == 1
@@ -788,8 +812,7 @@ static  void  OS_InitTaskStat (void)
                           &OSTaskStatStk[0],                           /* Set Bottom-Of-Stack            */
                           OS_TASK_STAT_STK_SIZE,
                           (void *)0,                                   /* No TCB extension               */
-                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,  /* Enable stack checking + clear  */
-                          0, 0);                                       /* period=0, exec_time=0 (system task) */
+                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);  /* Enable stack checking + clear  */
     #else
     (void)OSTaskCreateExt(OS_TaskStat,
                           (void *)0,                                   /* No args passed to OS_TaskStat()*/
@@ -799,8 +822,7 @@ static  void  OS_InitTaskStat (void)
                           &OSTaskStatStk[OS_TASK_STAT_STK_SIZE - 1],   /* Set Bottom-Of-Stack            */
                           OS_TASK_STAT_STK_SIZE,
                           (void *)0,                                   /* No TCB extension               */
-                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,  /* Enable stack checking + clear  */
-                          0, 0);                                       /* period=0, exec_time=0 (system task) */
+                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);  /* Enable stack checking + clear  */
     #endif
 #else
     #if OS_STK_GROWTH == 1
@@ -880,37 +902,6 @@ void  OS_Sched (void)
 
     OS_ENTER_CRITICAL();
     if ((OSIntNesting == 0) && (OSLockNesting == 0)) { /* Sched. only if all ISRs done & not locked    */
-
-#ifdef SCHED_EDF
-        /* TODO (組員 B): 實作 EDF 排程邏輯
-         *
-         * 目標：找出所有就緒 app task 中 OSTCBDeadline 最小的，把它的優先權改成 1，
-         *       讓 uC/OS II 原有排程器自然選到它。
-         *
-         * 步驟：
-         *   1. 宣告 OS_TCB *ptcb, *best = (OS_TCB *)0; INT32U min_dl = 0xFFFFFFFFl;
-         *   2. 從 OSTCBList 開始，沿 OSTCBNext 走完整個 TCB 鏈結串列
-         *   3. 每個 TCB 判斷（全部符合才列入候選）：
-         *        ptcb->OSTCBStat  == OS_STAT_RDY
-         *        ptcb->OSTCBPrio  != OS_IDLE_PRIO
-         *        ptcb->OSTCBPrio  != OS_STAT_PRIO
-         *        ptcb->OSTCBPeriod > 0          （period=0 是系統 task，排除）
-         *      若 OSTCBDeadline < min_dl，更新 min_dl 和 best
-         *   4. 找到 best 後，若 best->OSTCBPrio != 1：
-         *        a. 若 OSTCBPrioTbl[1] 有人佔著，先還原它：
-         *             OS_TCB *cur_p1 = OSTCBPrioTbl[1];
-         *             OS_EXIT_CRITICAL();
-         *             OSTaskChangePrio(1, cur_p1->OSTCBPrioOrg);
-         *             OS_ENTER_CRITICAL();
-         *        b. 把 best 移到優先權 1：
-         *             OS_EXIT_CRITICAL();
-         *             OSTaskChangePrio(best->OSTCBPrio, 1);
-         *             OS_ENTER_CRITICAL();
-         *
-         * 注意：OSTaskChangePrio() 必須在 critical section 外呼叫。
-         */
-#endif /* SCHED_EDF */
-
         y             = OSUnMapTbl[OSRdyGrp];          /* Get pointer to HPT ready to run              */
         OSPrioHighRdy = (INT8U)((y << 3) + OSUnMapTbl[OSRdyTbl[y]]);
         if (OSPrioHighRdy != OSPrioCur) {              /* No Ctx Sw if current task is highest rdy     */
