@@ -733,7 +733,8 @@ static  void  OS_InitTaskIdle (void)
                           &OSTaskIdleStk[0],                         /* Set Bottom-Of-Stack                  */
                           OS_TASK_IDLE_STK_SIZE,
                           (void *)0,                                 /* No TCB extension                     */
-                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);/* Enable stack checking + clear stack  */
+                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,/* Enable stack checking + clear stack  */
+                          0, 0);                                     /* period=0, exec_time=0 (system task)  */
     #else
     (void)OSTaskCreateExt(OS_TaskIdle,
                           (void *)0,                                 /* No arguments passed to OS_TaskIdle() */
@@ -743,7 +744,8 @@ static  void  OS_InitTaskIdle (void)
                           &OSTaskIdleStk[OS_TASK_IDLE_STK_SIZE - 1], /* Set Bottom-Of-Stack                  */
                           OS_TASK_IDLE_STK_SIZE,
                           (void *)0,                                 /* No TCB extension                     */
-                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);/* Enable stack checking + clear stack  */
+                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,/* Enable stack checking + clear stack  */
+                          0, 0);                                     /* period=0, exec_time=0 (system task)  */
     #endif
 #else
     #if OS_STK_GROWTH == 1
@@ -786,7 +788,8 @@ static  void  OS_InitTaskStat (void)
                           &OSTaskStatStk[0],                           /* Set Bottom-Of-Stack            */
                           OS_TASK_STAT_STK_SIZE,
                           (void *)0,                                   /* No TCB extension               */
-                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);  /* Enable stack checking + clear  */
+                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,  /* Enable stack checking + clear  */
+                          0, 0);                                       /* period=0, exec_time=0 (system task) */
     #else
     (void)OSTaskCreateExt(OS_TaskStat,
                           (void *)0,                                   /* No args passed to OS_TaskStat()*/
@@ -796,7 +799,8 @@ static  void  OS_InitTaskStat (void)
                           &OSTaskStatStk[OS_TASK_STAT_STK_SIZE - 1],   /* Set Bottom-Of-Stack            */
                           OS_TASK_STAT_STK_SIZE,
                           (void *)0,                                   /* No TCB extension               */
-                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);  /* Enable stack checking + clear  */
+                          OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,  /* Enable stack checking + clear  */
+                          0, 0);                                       /* period=0, exec_time=0 (system task) */
     #endif
 #else
     #if OS_STK_GROWTH == 1
