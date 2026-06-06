@@ -214,6 +214,8 @@ typedef struct {
     INT8U   OSEventGrp;                    /* Group corresponding to tasks waiting for event to occur  */
     INT16U  OSEventCnt;                    /* Semaphore Count (not used if other EVENT type)           */
     void   *OSEventPtr;                    /* Pointer to message or queue structure                    */
+    INT8U   OSEventCeiling;                /* TEAMMATE C / PCP: ceiling priority for this semaphore    */
+    void   *OSEventOwner;                  /* TEAMMATE C / PCP: TCB of task currently holding sem      */
     INT8U   OSEventTbl[OS_EVENT_TBL_SIZE]; /* List of tasks waiting for event to occur                 */
 } OS_EVENT;
 #endif
