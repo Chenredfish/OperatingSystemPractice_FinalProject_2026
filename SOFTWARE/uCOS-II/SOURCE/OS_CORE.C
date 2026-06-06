@@ -1110,7 +1110,7 @@ INT8U  OS_TCBInit (INT8U prio, OS_STK *ptos, OS_STK *pbos, INT16U id, INT32U stk
         ptcb->OSTCBDelReq    = OS_NO_ERR;
 #endif
 
-        ptcb->OSTCBY         = prio >> 3;                  /* Pre-compute X, Y, BitX and BitY          */
+        ptcb->OSTCBY         = prio >> 3;                  /* Pre-compute X, Y, BitX and BitY           */
         ptcb->OSTCBBitY      = OSMapTbl[ptcb->OSTCBY];
         ptcb->OSTCBX         = prio & 0x07;
         ptcb->OSTCBBitX      = OSMapTbl[ptcb->OSTCBX];
