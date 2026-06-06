@@ -882,33 +882,40 @@ void  OS_Sched (void)
     if ((OSIntNesting == 0) && (OSLockNesting == 0)) { /* Sched. only if all ISRs done & not locked    */
 
 #ifdef SCHED_EDF
-        /* TODO (組員 B): 實作 EDF 排程邏輯
-         *
-         * 目標：找出所有就緒 app task 中 OSTCBDeadline 最小的，把它的優先權改成 1，
-         *       讓 uC/OS II 原有排程器自然選到它。
-         *
-         * 步驟：
-         *   1. 宣告 OS_TCB *ptcb, *best = (OS_TCB *)0; INT32U min_dl = 0xFFFFFFFFl;
-         *   2. 從 OSTCBList 開始，沿 OSTCBNext 走完整個 TCB 鏈結串列
-         *   3. 每個 TCB 判斷（全部符合才列入候選）：
-         *        ptcb->OSTCBStat  == OS_STAT_RDY
-         *        ptcb->OSTCBPrio  != OS_IDLE_PRIO
-         *        ptcb->OSTCBPrio  != OS_STAT_PRIO
-         *        ptcb->OSTCBPeriod > 0          （period=0 是系統 task，排除）
-         *      若 OSTCBDeadline < min_dl，更新 min_dl 和 best
-         *   4. 找到 best 後，若 best->OSTCBPrio != 1：
-         *        a. 若 OSTCBPrioTbl[1] 有人佔著，先還原它：
-         *             OS_TCB *cur_p1 = OSTCBPrioTbl[1];
-         *             OS_EXIT_CRITICAL();
-         *             OSTaskChangePrio(1, cur_p1->OSTCBPrioOrg);
-         *             OS_ENTER_CRITICAL();
-         *        b. 把 best 移到優先權 1：
-         *             OS_EXIT_CRITICAL();
-         *             OSTaskChangePrio(best->OSTCBPrio, 1);
-         *             OS_ENTER_CRITICAL();
-         *
-         * 注意：OSTaskChangePrio() 必須在 critical section 外呼叫。
-         */
+        {
+            OS_TCB  *ptcb;
+            OS_TCB  *best   = (OS_TCB *)0;
+            INT32U   min_dl = 0xFFFFFFFFl;
+
+            ptcb = OSTCBList;
+            while (ptcb != (OS_TCB *)0) {
+                if ((ptcb->OSTCBStat == OS_STAT_RDY) &&
+                    (ptcb->OSTCBPrio != OS_IDLE_PRIO) &&
+                    (ptcb->OSTCBPrio != OS_STAT_PRIO) &&
+                    (ptcb->OSTCBPeriod > 0u)) {
+
+                    if (ptcb->OSTCBDeadline < min_dl) {
+                        min_dl = ptcb->OSTCBDeadline;
+                        best   = ptcb;
+                    }
+                }
+                ptcb = ptcb->OSTCBNext;
+            }
+
+            if ((best != (OS_TCB *)0) && (best->OSTCBPrio != 1u)) {
+                OS_TCB *cur_p1 = OSTCBPrioTbl[1];
+
+                if ((cur_p1 != (OS_TCB *)0) && (cur_p1 != (OS_TCB *)1)) {
+                    OS_EXIT_CRITICAL();
+                    OSTaskChangePrio(1, cur_p1->OSTCBPrioOrg);
+                    OS_ENTER_CRITICAL();
+                }
+
+                OS_EXIT_CRITICAL();
+                OSTaskChangePrio(best->OSTCBPrio, 1);
+                OS_ENTER_CRITICAL();
+            }
+        }
 #endif /* SCHED_EDF */
 
         y             = OSUnMapTbl[OSRdyGrp];          /* Get pointer to HPT ready to run              */
