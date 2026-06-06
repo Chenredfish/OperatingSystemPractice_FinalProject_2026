@@ -169,7 +169,8 @@ static  void  TaskStartCreateTasks (void)
     }
 
     SharedSem = OSSemCreate(1);
-    /* TEAMMATE C: SharedSem->OSEventCeiling = 1; */
+    SharedSem->OSEventCeiling = 1;      /* TEAMMATE C / PCP: highest priority using SharedSem */
+    SharedSem->OSEventOwner   = (void *)0; /* TEAMMATE C / PCP: SharedSem starts unlocked       */
 }
 
 /*
@@ -186,10 +187,13 @@ static  void  TaskStartCreateTasks (void)
 
 void  PeriodicTask (void *pdata)
 {
+    INT32U  release_tick;
     INT32U  start_tick;
     INT32U  end_tick;
     INT32U  elapsed;
     INT32U  delay_ticks;
+    INT32U  period_ticks;
+    INT32U  exec_ticks;
     INT8U   task_id;
     INT8U   err;
     INT16U  run_count;
@@ -199,40 +203,43 @@ void  PeriodicTask (void *pdata)
     task_id   = (INT8U)(INT32U)pdata;
     row       = 11 + (int)task_id;
     run_count = 0;
+    period_ticks = TaskPeriod[task_id - 1];
+    exec_ticks   = TaskExecTime[task_id - 1];
 
     for (;;) {
-        start_tick = OSTimeGet();
+        release_tick = OSTimeGet();
         run_count++;
 
-        /* Print start time BEFORE execution (= context switch time) */
+        OSSemPend(SharedSem, 0, &err);
+        start_tick = OSTimeGet();       /* TEAMMATE C / PCP: start after semaphore is acquired */
+
+        /* Print start time AFTER semaphore acquisition (= real execution start) */
         sprintf(s, "Task%d  start=%4lds  end=----s  period=%4lds  #%3d",
                 (int)task_id,
                 start_tick / OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
+                period_ticks / OS_TICKS_PER_SEC,
                 (int)run_count);
         PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
 
-        OSSemPend(SharedSem, 0, &err);
-
-        while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) {
+        while ((OSTimeGet() - start_tick) < exec_ticks) { /* TEAMMATE C / PCP: do not count sem wait time */
             ;
         }
 
-        OSSemPost(SharedSem);
-
         end_tick = OSTimeGet();
-        elapsed  = end_tick - start_tick;
+        elapsed  = end_tick - release_tick; /* TEAMMATE C / PCP: keep periodic release timing */
 
         /* Fill in end time AFTER execution */
         sprintf(s, "Task%d  start=%4lds  end=%4lds  period=%4lds  #%3d",
                 (int)task_id,
                 start_tick / OS_TICKS_PER_SEC,
                 end_tick / OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
+                period_ticks / OS_TICKS_PER_SEC,
                 (int)run_count);
         PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
 
-        delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
+        OSSemPost(SharedSem);             /* TEAMMATE C / PCP: release sem after this task is fully done */
+
+        delay_ticks = period_ticks - elapsed;
         if ((INT32S)delay_ticks > 0) {
             OSTimeDly((INT16U)delay_ticks);
         }
@@ -247,7 +254,7 @@ void  PeriodicTask (void *pdata)
 
 static  void  TaskStartDispInit (void)
 {
-    PC_DispStr(0,  0, "       uC/OS-II  --  RM + PCP (Bonus)  --  OS Practice Final Project        ",
+    PC_DispStr(0,  0, "    uC/OS-II  --  RM + PCP (Fixed Handoff)  --  OS Practice Final Project    ",
                DISP_FGND_WHITE + DISP_BGND_RED);
     PC_DispStr(0,  2, "Scheduler: RM  |  Bonus: Priority Ceiling Protocol on shared resource",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);

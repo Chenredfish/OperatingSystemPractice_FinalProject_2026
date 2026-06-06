@@ -14,9 +14,15 @@ ECHO * Note(s)     : 1) This file assume that we use a MAKE utility.
 ECHO *******************************************************************************
 ECHO *
 ECHO ON
+IF EXIST C:\WINDOWS\SYSTEM32\COMMAND.COM SET COMSPEC=C:\WINDOWS\SYSTEM32\COMMAND.COM
 MD    ..\WORK
 MD    ..\OBJ
 MD    ..\LST
+DEL   ..\WORK\*.* /Q
+DEL   ..\OBJ\*.* /Q
+DEL   ..\LST\*.* /Q
+DEL   TEST.EXE
+DEL   TEST.MAP
 CD    ..\WORK
 COPY  ..\TEST\TEST.MAK   TEST.MAK
 C:\BC45\BIN\MAKE -f TEST.MAK
