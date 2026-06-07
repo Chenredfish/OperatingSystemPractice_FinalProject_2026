@@ -1,24 +1,23 @@
 /*
 *********************************************************************************************************
-*                                               uC/OS-II
-*                                         The Real-Time Kernel
+* uC/OS-II
+* The Real-Time Kernel
 *
-*                              OS Practice Final Project -- RM Scheduler
+* OS Practice Final Project -- RM Scheduler
 *
 * Description: Reads taskset.txt, creates periodic tasks, and schedules them
-*              using Rate Monotonic (RM): shorter period = higher priority.
-*              Priority assignment is static and done at task creation time.
+* using Rate Monotonic (RM): shorter period = higher priority.
+* Priority assignment is static and done at task creation time.
 *
-* TODO (Teammate A): Implement TaskStartCreateTasks() and PeriodicTask().
-*   See WORKPLAN.md Section III for details and hints.
 *********************************************************************************************************
 */
 
 #include "includes.h"
+#include <stdio.h> // 確保引入標準輸入輸出函式庫以支援讀檔
 
 /*
 *********************************************************************************************************
-*                                              CONSTANTS
+* CONSTANTS
 *********************************************************************************************************
 */
 
@@ -27,7 +26,7 @@
 
 /*
 *********************************************************************************************************
-*                                              VARIABLES
+* VARIABLES
 *********************************************************************************************************
 */
 
@@ -40,7 +39,7 @@ int     TaskCount = 0;
 
 /*
 *********************************************************************************************************
-*                                         FUNCTION PROTOTYPES
+* FUNCTION PROTOTYPES
 *********************************************************************************************************
 */
 
@@ -51,7 +50,7 @@ static void  TaskStartDispInit(void);
 
 /*
 *********************************************************************************************************
-*                                                MAIN
+* MAIN
 *********************************************************************************************************
 */
 
@@ -70,7 +69,7 @@ void  main (void)
 
 /*
 *********************************************************************************************************
-*                                           STARTUP TASK
+* STARTUP TASK
 *********************************************************************************************************
 */
 
@@ -105,15 +104,7 @@ void  TaskStart (void *pdata)
 
 /*
 *********************************************************************************************************
-*                                       READ TASKSET AND CREATE TASKS
-*
-* RM rule: shorter period -> higher priority (smaller priority number).
-*
-* Steps:
-*   1. Open "taskset.txt", read TaskCount, then read (exec_time, period) for each task.
-*   2. Sort tasks by period ascending -- shortest period gets priority 1.
-*   3. Call OSTaskCreateExt() for each task in sorted order, assigning priority 1, 2, 3...
-*      Pass TaskPeriod[i] and TaskExecTime[i] as the last two arguments (period, exec_time).
+* READ TASKSET AND CREATE TASKS
 *********************************************************************************************************
 */
 
@@ -125,6 +116,7 @@ static  void  TaskStartCreateTasks (void)
     INT8U   prio;
     char    s[80];
 
+    // 1. 讀取 taskset.txt
     fp = fopen("taskset.txt", "r");
     if (fp == (FILE *)0) {
         PC_DispStr(0, 5, "ERROR: cannot open taskset.txt", DISP_FGND_RED + DISP_BGND_BLACK);
@@ -134,32 +126,56 @@ static  void  TaskStartCreateTasks (void)
     fscanf(fp, "%d", &TaskCount);
     for (i = 0; i < TaskCount; i++) {
         fscanf(fp, "%ld %ld", &TaskExecTime[i], &TaskPeriod[i]);
+        // 換算為系統 Ticks
+        TaskExecTime[i] = TaskExecTime[i] * OS_TICKS_PER_SEC;
+        TaskPeriod[i]   = TaskPeriod[i] * OS_TICKS_PER_SEC;
     }
     fclose(fp);
 
-    /* TODO: Sort TaskPeriod[] and TaskExecTime[] together by period ascending */
-    /*       Hint: bubble sort -- swap both arrays together when TaskPeriod[j] > TaskPeriod[j+1] */
+    // 2. 氣泡排序：依 TaskPeriod 升冪排列，同步移動 TaskExecTime
+    for (i = 0; i < TaskCount - 1; i++) {
+        for (j = 0; j < TaskCount - i - 1; j++) {
+            if (TaskPeriod[j] > TaskPeriod[j+1]) {
+                tmpP = TaskPeriod[j];
+                TaskPeriod[j] = TaskPeriod[j+1];
+                TaskPeriod[j+1] = tmpP;
 
-    /* TODO: For each task i, assign prio = i+1, then call OSTaskCreateExt() */
-    /*       Pass PeriodicTask as the task function, (void*)(i+1) as pdata    */
-    /*       Pass TaskPeriod[i] and TaskExecTime[i] as the last two arguments */
-    /*       Display each task's info with PC_DispStr at row 5+i              */
+                tmpE = TaskExecTime[j];
+                TaskExecTime[j] = TaskExecTime[j+1];
+                TaskExecTime[j+1] = tmpE;
+            }
+        }
+    }
+
+    // 3. 建立 tasks，指派靜態優先權
+    for (i = 0; i < TaskCount; i++) {
+        prio = i + 1; // 陣列索引越小代表週期越短，優先權數字給予越小 (優先度越高)
+        
+        OSTaskCreateExt(PeriodicTask,
+                        (void *)(INT32U)(i + 1),         // 將 i+1 作為 task_id 傳入
+                        &TaskStk[i][TASK_STK_SIZE - 1],
+                        prio,
+                        prio,
+                        &TaskStk[i][0],
+                        TASK_STK_SIZE,
+                        (void *)0,
+                        OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,
+                        TaskPeriod[i],                   // 傳入週期
+                        TaskExecTime[i]);                // 傳入執行時間
+
+        // 顯示初始化資訊 (換算回秒數)
+        sprintf(s, "Task%d: exec=%lds period=%lds prio=%d",
+                i + 1,
+                TaskExecTime[i] / OS_TICKS_PER_SEC,
+                TaskPeriod[i] / OS_TICKS_PER_SEC,
+                prio);
+        PC_DispStr(0, 5 + i, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    }
 }
 
 /*
 *********************************************************************************************************
-*                                           PERIODIC TASK BODY
-*
-* Each task should:
-*   1. Record the current tick as start_tick (use OSTimeGet()).
-*   2. Busy-wait until (OSTimeGet() - start_tick) >= OSTCBCur->OSTCBExecTime.
-*      This simulates computation and can be preempted by a higher-priority task.
-*   3. Display which task ran and at what tick.
-*   4. Calculate remaining time in the period: delay = OSTCBCur->OSTCBPeriod - elapsed.
-*   5. Call OSTimeDly(delay) to sleep until the next period begins.
-*
-* Access the current task's TCB fields via OSTCBCur->OSTCBExecTime, OSTCBCur->OSTCBPeriod.
-* task_id is passed via pdata.
+* PERIODIC TASK BODY
 *********************************************************************************************************
 */
 
@@ -171,27 +187,52 @@ void  PeriodicTask (void *pdata)
     INT8U   task_id;
     char    s[80];
     int     row;
+    INT32U  run_count = 0;
 
     task_id = (INT8U)(INT32U)pdata;
     row     = 13 + (int)task_id;
 
     for (;;) {
-        /* TODO: start_tick = OSTimeGet(); */
+        run_count++;
+        start_tick = OSTimeGet();
 
-        /* TODO: busy-wait loop for OSTCBCur->OSTCBExecTime ticks */
+        // 忙碌等待前：印出 start 狀態，end 留空
+        sprintf(s, "Task%d | start=%5lu  end=----s  period=%5lu  run=%4lu",
+                task_id,
+                start_tick / OS_TICKS_PER_SEC,
+                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
+                run_count);
+        PC_DispStr(0, row, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 
-        /* TODO: elapsed = OSTimeGet() - start_tick; */
+        // 模擬執行：佔用 CPU 直到經過要求的執行時間
+        while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) {
+            // Busy wait loop
+        }
 
-        /* TODO: display task execution info using PC_DispStr at row */
+        elapsed = OSTimeGet() - start_tick;
 
-        /* TODO: delay_ticks = OSTCBCur->OSTCBPeriod - elapsed; */
-        /* TODO: if delay_ticks > 0, call OSTimeDly((INT16U)delay_ticks); */
+        // 忙碌等待後：印出實際 end 時間
+        sprintf(s, "Task%d | start=%5lu  end=%5lu  period=%5lu  run=%4lu",
+                task_id,
+                start_tick / OS_TICKS_PER_SEC,
+                OSTimeGet() / OS_TICKS_PER_SEC,
+                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
+                run_count);
+        PC_DispStr(0, row, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+
+        // 計算進入下一週期的延遲時間
+        if (OSTCBCur->OSTCBPeriod > elapsed) {
+            delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
+            OSTimeDly((INT16U)delay_ticks);
+        } else {
+            OSTimeDly(1);
+        }
     }
 }
 
 /*
 *********************************************************************************************************
-*                                        INITIALIZE THE DISPLAY
+* INITIALIZE THE DISPLAY
 *********************************************************************************************************
 */
 
