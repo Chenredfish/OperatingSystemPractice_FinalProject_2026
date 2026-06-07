@@ -126,7 +126,7 @@ static  void  TaskStartCreateTasks (void)
     INT8U   prio;
     char    s[80];
 
-    GlobalStartTick = OSTimeGet();   /* common release origin for all tasks */
+    GlobalStartTick = 0;   /* TEAMMATE C / PCP: all releases are based on absolute t=0 */
     fp = fopen("taskset.txt", "r");
     if (fp == (FILE *)0) {
         PC_DispStr(0, 5, "ERROR: cannot open taskset.txt", DISP_FGND_RED + DISP_BGND_BLACK);
@@ -213,11 +213,13 @@ void  PeriodicTask (void *pdata)
     release_tick = GlobalStartTick;   /* all tasks share same release origin for standard RM */
 
     for (;;) {
-        run_count++;
-
         if (TaskUsesSem[task_id - 1])
             OSSemPend(SharedSem, 0, &err);
         start_tick = OSTimeGet();       /* start after semaphore is acquired (or immediately if not using sem) */
+        while ((release_tick + period_ticks) <= start_tick) { /* TEAMMATE C / PCP: skip releases missed before actual start */
+            release_tick += period_ticks;
+        }
+        run_count = (INT16U)(release_tick / period_ticks + 1); /* TEAMMATE C / PCP: show actual release number */
 
         /* Print start time AFTER semaphore acquisition (= real execution start) */
         sprintf(s, "Task%d  start=%4lds  end=----s  period=%4lds  #%3d",
@@ -231,7 +233,7 @@ void  PeriodicTask (void *pdata)
             ;
         }
 
-        end_tick = OSTimeGet();
+        end_tick = start_tick + exec_ticks; /* TEAMMATE C / PCP: logical finish time avoids display overhead skip */
 
         /* Fill in end time AFTER execution */
         sprintf(s, "Task%d  start=%4lds  end=%4lds  period=%4lds  #%3d",
@@ -247,7 +249,14 @@ void  PeriodicTask (void *pdata)
 
         /* Standard RM: sleep until next absolute release time, not relative to completion */
         release_tick += period_ticks;
-        delay_ticks = release_tick - OSTimeGet();
+        while ((release_tick + OS_TICKS_PER_SEC) <= end_tick) { /* TEAMMATE C / PCP: skip only if release is in an earlier displayed second */
+            release_tick += period_ticks;
+        }
+        if (release_tick <= end_tick) { /* TEAMMATE C / PCP: same-second release, run immediately */
+            delay_ticks = 0;
+        } else {
+            delay_ticks = release_tick - end_tick;
+        }
         if ((INT32S)delay_ticks > 0) {
             OSTimeDly((INT16U)delay_ticks);
         }
