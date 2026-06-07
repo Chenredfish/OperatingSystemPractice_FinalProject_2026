@@ -4,16 +4,11 @@
 * The Real-Time Kernel
 *
 * OS Practice Final Project -- RM Scheduler
-*
-* Description: Reads taskset.txt, creates periodic tasks, and schedules them
-* using Rate Monotonic (RM): shorter period = higher priority.
-* Priority assignment is static and done at task creation time.
-*
 *********************************************************************************************************
 */
 
 #include "includes.h"
-#include <stdio.h> // 確保引入標準輸入輸出函式庫以支援讀檔
+#include <stdio.h> 
 
 /*
 *********************************************************************************************************
@@ -36,6 +31,8 @@ OS_STK  TaskStartStk[TASK_STK_SIZE];
 INT32U  TaskPeriod[MAX_TASKS];
 INT32U  TaskExecTime[MAX_TASKS];
 int     TaskCount = 0;
+
+INT32U  MyStartTime;
 
 /*
 *********************************************************************************************************
@@ -116,7 +113,6 @@ static  void  TaskStartCreateTasks (void)
     INT8U   prio;
     char    s[80];
 
-    // 1. 讀取 taskset.txt
     fp = fopen("taskset.txt", "r");
     if (fp == (FILE *)0) {
         PC_DispStr(0, 5, "ERROR: cannot open taskset.txt", DISP_FGND_RED + DISP_BGND_BLACK);
@@ -126,20 +122,17 @@ static  void  TaskStartCreateTasks (void)
     fscanf(fp, "%d", &TaskCount);
     for (i = 0; i < TaskCount; i++) {
         fscanf(fp, "%ld %ld", &TaskExecTime[i], &TaskPeriod[i]);
-        // 換算為系統 Ticks
         TaskExecTime[i] = TaskExecTime[i] * OS_TICKS_PER_SEC;
         TaskPeriod[i]   = TaskPeriod[i] * OS_TICKS_PER_SEC;
     }
     fclose(fp);
 
-    // 2. 氣泡排序：依 TaskPeriod 升冪排列，同步移動 TaskExecTime
     for (i = 0; i < TaskCount - 1; i++) {
         for (j = 0; j < TaskCount - i - 1; j++) {
             if (TaskPeriod[j] > TaskPeriod[j+1]) {
                 tmpP = TaskPeriod[j];
                 TaskPeriod[j] = TaskPeriod[j+1];
                 TaskPeriod[j+1] = tmpP;
-
                 tmpE = TaskExecTime[j];
                 TaskExecTime[j] = TaskExecTime[j+1];
                 TaskExecTime[j+1] = tmpE;
@@ -147,12 +140,12 @@ static  void  TaskStartCreateTasks (void)
         }
     }
 
-    // 3. 建立 tasks，指派靜態優先權
+    MyStartTime = OSTimeGet();
+
     for (i = 0; i < TaskCount; i++) {
-        prio = i + 1; // 陣列索引越小代表週期越短，優先權數字給予越小 (優先度越高)
-        
+        prio = i + 1;
         OSTaskCreateExt(PeriodicTask,
-                        (void *)(INT32U)(i + 1),         // 將 i+1 作為 task_id 傳入
+                        (void *)(INT32U)(i + 1),
                         &TaskStk[i][TASK_STK_SIZE - 1],
                         prio,
                         prio,
@@ -160,12 +153,11 @@ static  void  TaskStartCreateTasks (void)
                         TASK_STK_SIZE,
                         (void *)0,
                         OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR,
-                        TaskPeriod[i],                   // 傳入週期
-                        TaskExecTime[i]);                // 傳入執行時間
+                        TaskPeriod[i],
+                        TaskExecTime[i]);
 
-        // 顯示初始化資訊 (換算回秒數)
         sprintf(s, "Task%d: exec=%lds period=%lds prio=%d",
-                i + 1,
+                i,
                 TaskExecTime[i] / OS_TICKS_PER_SEC,
                 TaskPeriod[i] / OS_TICKS_PER_SEC,
                 prio);
@@ -179,54 +171,50 @@ static  void  TaskStartCreateTasks (void)
 *********************************************************************************************************
 */
 
-void  PeriodicTask (void *pdata)
+void PeriodicTask(void *pdata)
 {
-    INT32U  start_tick;
-    INT32U  elapsed;
-    INT32U  delay_ticks;
-    INT8U   task_id;
-    char    s[80];
-    int     row;
-    INT32U  run_count = 0;
+    char s[80];
+    INT32U start_tick, end_tick, delay_ticks, next_arrival, run_count = 0;
+    INT8U task_id = (INT8U)(INT32U)pdata; 
+    int display_id = task_id - 1;
+    int row = 11 + display_id;
+    INT32U start_sec, end_sec, period_sec;
 
-    task_id = (INT8U)(INT32U)pdata;
-    row     = 13 + (int)task_id;
+    next_arrival = MyStartTime + OSTCBCur->OSTCBPeriod;
+    OSTCBCur->OSTCBDeadline = next_arrival;
 
-    for (;;) {
+    for (;;)
+    {
         run_count++;
         start_tick = OSTimeGet();
 
-        // 忙碌等待前：印出 start 狀態，end 留空
-        sprintf(s, "Task%d | start=%5lu  end=----s  period=%5lu  run=%4lu",
-                task_id,
-                start_tick / OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
-                run_count);
+        start_sec = (start_tick - MyStartTime) / OS_TICKS_PER_SEC;
+        period_sec = OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC;
+
+        sprintf(s, "Task%d : start=%5lu  end=----s  period=%5lu  run=%4lu",
+                display_id, (unsigned long)start_sec, (unsigned long)period_sec, (unsigned long)run_count);
         PC_DispStr(0, row, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 
-        // 模擬執行：佔用 CPU 直到經過要求的執行時間
         while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) {
-            // Busy wait loop
+            // 空轉
         }
 
-        elapsed = OSTimeGet() - start_tick;
+        end_tick = OSTimeGet();
+        end_sec = (end_tick - MyStartTime) / OS_TICKS_PER_SEC;
 
-        // 忙碌等待後：印出實際 end 時間
-        sprintf(s, "Task%d | start=%5lu  end=%5lu  period=%5lu  run=%4lu",
-                task_id,
-                start_tick / OS_TICKS_PER_SEC,
-                OSTimeGet() / OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
-                run_count);
+        sprintf(s, "Task%d : start=%5lu  end=%5lu  period=%5lu  run=%4lu",
+                display_id, (unsigned long)start_sec, (unsigned long)end_sec, (unsigned long)period_sec, (unsigned long)run_count);
         PC_DispStr(0, row, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 
-        // 計算進入下一週期的延遲時間
-        if (OSTCBCur->OSTCBPeriod > elapsed) {
-            delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
+        if (next_arrival > OSTimeGet()) {
+            delay_ticks = next_arrival - OSTimeGet();
             OSTimeDly((INT16U)delay_ticks);
         } else {
             OSTimeDly(1);
         }
+
+        next_arrival += OSTCBCur->OSTCBPeriod;
+        OSTCBCur->OSTCBDeadline = next_arrival; 
     }
 }
 
@@ -236,7 +224,7 @@ void  PeriodicTask (void *pdata)
 *********************************************************************************************************
 */
 
-static  void  TaskStartDispInit (void)
+static void TaskStartDispInit (void)
 {
     PC_DispStr(0,  0, "         uC/OS-II  --  RM Scheduler  --  OS Practice Final Project         ",
                DISP_FGND_WHITE + DISP_BGND_RED);
