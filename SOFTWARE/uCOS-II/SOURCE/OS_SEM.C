@@ -275,10 +275,18 @@ void  OSSemPend (OS_EVENT *pevent, INT16U timeout, INT8U *err)
     if (pevent->OSEventOwner != (void *)0 &&
         OSTCBCur->OSTCBPrio >= pevent->OSEventCeiling) { /* PCP: current task not above ceiling        */
         OS_TCB *owner = (OS_TCB *)pevent->OSEventOwner;
-        if (owner->OSTCBPrio > OSTCBCur->OSTCBPrio) {    /* Owner has lower prio — inherit             */
+        if (owner->OSTCBPrio > pevent->OSEventCeiling) {  /* Owner below ceiling — raise to ceiling     */
             OS_EXIT_CRITICAL();
-            OSTaskChangePrio(owner->OSTCBPrio, OSTCBCur->OSTCBPrio);
+            OSTaskChangePrio(owner->OSTCBPrio, pevent->OSEventCeiling);
             OS_ENTER_CRITICAL();
+            /* Re-check: owner may have released sem while we were out of critical section */
+            if (pevent->OSEventCnt > 0) {
+                pevent->OSEventCnt--;
+                pevent->OSEventOwner = (void *)OSTCBCur;
+                OS_EXIT_CRITICAL();
+                *err = OS_NO_ERR;
+                return;
+            }
         }
     }
                                                       /* Otherwise, must wait until event occurs       */
@@ -320,9 +328,10 @@ void  OSSemPend (OS_EVENT *pevent, INT16U timeout, INT8U *err)
 INT8U  OSSemPost (OS_EVENT *pevent)
 {
 #if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
-    OS_CPU_SR  cpu_sr;                               
-#endif    
-    INT8U      rdy_prio;                                   /* TEAMMATE C / PCP: task readied by post    */
+    OS_CPU_SR  cpu_sr;
+#endif
+    OS_TCB    *old_owner;                                  /* PCP: save owner before handing off sem    */
+    INT8U      rdy_prio;                                   /* PCP: priority of task readied by post     */
 
 #if OS_ARG_CHK_EN > 0
     if (pevent == (OS_EVENT *)0) {                         /* Validate 'pevent'                        */
@@ -333,28 +342,33 @@ INT8U  OSSemPost (OS_EVENT *pevent)
     }
 #endif
     OS_ENTER_CRITICAL();
-    {   /* PCP: restore owner's priority before releasing sem */
-        OS_TCB *owner = (OS_TCB *)pevent->OSEventOwner;
-        if (owner != (OS_TCB *)0 && owner->OSTCBPrio != owner->OSTCBPrioOrg) {
+    old_owner = (OS_TCB *)pevent->OSEventOwner;            /* save before OS_EventTaskRdy overwrites   */
+    if (pevent->OSEventGrp != 0x00) {                      /* See if any task waiting for semaphore    */
+        rdy_prio = OS_EventTaskRdy(pevent, (void *)0, OS_STAT_SEM); /* waiter → ready list first       */
+        pevent->OSEventOwner = (void *)OSTCBPrioTbl[rdy_prio]; /* hand sem to waiter                  */
+        /* PCP: restore old owner AFTER waiter is in ready list so OS_Sched picks waiter, not mid-prio */
+        if (old_owner != (OS_TCB *)0 && old_owner->OSTCBPrio != old_owner->OSTCBPrioOrg) {
             OS_EXIT_CRITICAL();
-            OSTaskChangePrio(owner->OSTCBPrio, owner->OSTCBPrioOrg);
+            OSTaskChangePrio(old_owner->OSTCBPrio, old_owner->OSTCBPrioOrg);
             OS_ENTER_CRITICAL();
         }
-    }
-    if (pevent->OSEventGrp != 0x00) {                      /* See if any task waiting for semaphore    */
-        rdy_prio = OS_EventTaskRdy(pevent, (void *)0, OS_STAT_SEM); /* TEAMMATE C / PCP: pass sem to waiter */
-        pevent->OSEventOwner = (void *)OSTCBPrioTbl[rdy_prio]; /* TEAMMATE C / PCP: new semaphore owner */
         OS_EXIT_CRITICAL();
         OS_Sched();                                        /* Find highest priority task ready to run  */
         return (OS_NO_ERR);
     }
-    pevent->OSEventOwner = (void *)0;                       /* TEAMMATE C / PCP: semaphore no longer owned */
-    if (pevent->OSEventCnt < 65535) {                 /* Make sure semaphore will not overflow         */
-        pevent->OSEventCnt++;                         /* Increment semaphore count to register event   */
+    /* No waiters: release sem FIRST (so OSSemPend re-check sees count>0), THEN restore priority.      */
+    /* OSTaskChangePrio drops the critical section internally and can context-switch to Task1 (Bug4). */
+    /* If count++ happens after, Task1's re-check still sees 0 and falls into the wait list forever. */
+    pevent->OSEventOwner = (void *)0;                      /* semaphore no longer owned                */
+    if (pevent->OSEventCnt < 65535) {                      /* Make sure semaphore will not overflow    */
+        pevent->OSEventCnt++;                              /* Increment semaphore count BEFORE prio restore */
         OS_EXIT_CRITICAL();
+        if (old_owner != (OS_TCB *)0 && old_owner->OSTCBPrio != old_owner->OSTCBPrioOrg) {
+            OSTaskChangePrio(old_owner->OSTCBPrio, old_owner->OSTCBPrioOrg);
+        }
         return (OS_NO_ERR);
     }
-    OS_EXIT_CRITICAL();                               /* Semaphore value has reached its maximum       */
+    OS_EXIT_CRITICAL();                                    /* Semaphore value has reached its maximum  */
     return (OS_SEM_OVF);
 }
 /*$PAGE*/

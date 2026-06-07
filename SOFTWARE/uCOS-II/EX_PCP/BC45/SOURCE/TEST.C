@@ -38,6 +38,7 @@ OS_EVENT *SharedSem;
 
 INT32U  TaskPeriod[MAX_TASKS];
 INT32U  TaskExecTime[MAX_TASKS];
+int     TaskUsesSem[MAX_TASKS];
 int     TaskCount = 0;
 
 /*
@@ -119,7 +120,7 @@ void  TaskStart (void *pdata)
 static  void  TaskStartCreateTasks (void)
 {
     FILE   *fp;
-    int     i, j;
+    int     i, j, tmpS;
     INT32U  tmpP, tmpE;
     INT8U   prio;
     char    s[80];
@@ -132,7 +133,7 @@ static  void  TaskStartCreateTasks (void)
 
     fscanf(fp, "%d", &TaskCount);
     for (i = 0; i < TaskCount; i++) {
-        fscanf(fp, "%ld %ld", &TaskExecTime[i], &TaskPeriod[i]);
+        fscanf(fp, "%ld %ld %d", &TaskExecTime[i], &TaskPeriod[i], &TaskUsesSem[i]);
         TaskExecTime[i] *= OS_TICKS_PER_SEC;
         TaskPeriod[i]   *= OS_TICKS_PER_SEC;
     }
@@ -143,12 +144,13 @@ static  void  TaskStartCreateTasks (void)
             if (TaskPeriod[j] > TaskPeriod[j+1]) {
                 tmpP = TaskPeriod[j];   TaskPeriod[j]   = TaskPeriod[j+1];   TaskPeriod[j+1]   = tmpP;
                 tmpE = TaskExecTime[j]; TaskExecTime[j] = TaskExecTime[j+1]; TaskExecTime[j+1] = tmpE;
+                tmpS = TaskUsesSem[j];  TaskUsesSem[j]  = TaskUsesSem[j+1];  TaskUsesSem[j+1]  = tmpS;
             }
         }
     }
 
     for (i = 0; i < TaskCount; i++) {
-        prio = (INT8U)(i + 1);
+        prio = (INT8U)(i + 2);  /* prio=1 reserved as PCP ceiling; user tasks start at 2 */
         OSTaskCreateExt(
             PeriodicTask,
             (void *)(INT32U)(i + 1),
@@ -162,15 +164,16 @@ static  void  TaskStartCreateTasks (void)
             TaskPeriod[i],
             TaskExecTime[i]
         );
-        sprintf(s, "Task%d: exec=%lds period=%lds prio=%d",
+        sprintf(s, "Task%d: exec=%lds period=%lds prio=%d sem=%c",
                 (int)(i+1), TaskExecTime[i]/OS_TICKS_PER_SEC,
-                TaskPeriod[i]/OS_TICKS_PER_SEC, (int)prio);
+                TaskPeriod[i]/OS_TICKS_PER_SEC, (int)prio,
+                TaskUsesSem[i] ? 'Y' : 'N');
         PC_DispStr(0, 5 + i, s, DISP_FGND_WHITE + DISP_BGND_BLACK);
     }
 
     SharedSem = OSSemCreate(1);
-    SharedSem->OSEventCeiling = 1;      /* TEAMMATE C / PCP: highest priority using SharedSem */
-    SharedSem->OSEventOwner   = (void *)0; /* TEAMMATE C / PCP: SharedSem starts unlocked       */
+    SharedSem->OSEventCeiling = 1;          /* PCP: prio=1 reserved as ceiling, always free */
+    SharedSem->OSEventOwner   = (void *)0;  /* SharedSem starts unlocked                    */
 }
 
 /*
@@ -210,8 +213,9 @@ void  PeriodicTask (void *pdata)
         release_tick = OSTimeGet();
         run_count++;
 
-        OSSemPend(SharedSem, 0, &err);
-        start_tick = OSTimeGet();       /* TEAMMATE C / PCP: start after semaphore is acquired */
+        if (TaskUsesSem[task_id - 1])
+            OSSemPend(SharedSem, 0, &err);
+        start_tick = OSTimeGet();       /* start after semaphore is acquired (or immediately if not using sem) */
 
         /* Print start time AFTER semaphore acquisition (= real execution start) */
         sprintf(s, "Task%d  start=%4lds  end=----s  period=%4lds  #%3d",
@@ -237,7 +241,8 @@ void  PeriodicTask (void *pdata)
                 (int)run_count);
         PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
 
-        OSSemPost(SharedSem);             /* TEAMMATE C / PCP: release sem after this task is fully done */
+        if (TaskUsesSem[task_id - 1])
+            OSSemPost(SharedSem);         /* release sem after this task is fully done */
 
         delay_ticks = period_ticks - elapsed;
         if ((INT32S)delay_ticks > 0) {
