@@ -182,7 +182,8 @@ void  PeriodicTask (void *pdata)
     row       = 11 + (int)task_id;
     run_count = 0;
 
-    for (;;) {
+
+     for (;;) {
         start_tick = OSTimeGet();
         run_count++;
 
@@ -212,9 +213,8 @@ void  PeriodicTask (void *pdata)
                 (int)run_count);
         PC_DispStr(0, row, s, DISP_FGND_CYAN + DISP_BGND_BLACK);
 
-        OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;  /* must be before OSTimeDly */
-
         delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
+        OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;  /* must be before OSTimeDly */
         if ((INT32S)delay_ticks > 0) {
             OSTimeDly((INT16U)delay_ticks);
         }

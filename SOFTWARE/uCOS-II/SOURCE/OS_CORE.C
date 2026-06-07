@@ -169,6 +169,54 @@ void  OSIntEnter (void)
 *********************************************************************************************************
 */
 
+static void  OS_EDFTaskChangePrio (INT8U oldprio, INT8U newprio)
+{
+    OS_TCB  *ptcb;
+    INT8U    y;
+    INT8U    x;
+    INT8U    bitx;
+    INT8U    bity;
+
+    if (oldprio >= OS_LOWEST_PRIO || newprio >= OS_LOWEST_PRIO) {
+        return;
+    }
+    if (OSTCBPrioTbl[newprio] != (OS_TCB *)0) {
+        return;
+    }
+
+    OSTCBPrioTbl[newprio] = (OS_TCB *)1;                    /* Reserve the entry                          */
+    y    = newprio >> 3;                                    /* Precompute to reduce INT. latency          */
+    bity = OSMapTbl[y];
+    x    = newprio & 0x07;
+    bitx = OSMapTbl[x];
+
+    OS_ENTER_CRITICAL();
+    ptcb = OSTCBPrioTbl[oldprio];                            /* Point to this task's TCB                   */
+    if (ptcb != (OS_TCB *)0) {
+        if ((OSRdyTbl[ptcb->OSTCBY] & ptcb->OSTCBBitX) != 0x00) {
+            if ((OSRdyTbl[ptcb->OSTCBY] &= ~ptcb->OSTCBBitX) == 0x00) {
+                OSRdyGrp &= ~ptcb->OSTCBBitY;
+            }
+            OSRdyGrp      |= bity;
+            OSRdyTbl[y]   |= bitx;
+        }
+
+        OSTCBPrioTbl[oldprio] = (OS_TCB *)0;
+        OSTCBPrioTbl[newprio] = ptcb;
+        ptcb->OSTCBPrio       = newprio;
+        if (ptcb == OSTCBCur) {
+            OSPrioCur = newprio;
+        }
+        ptcb->OSTCBY          = y;
+        ptcb->OSTCBX          = x;
+        ptcb->OSTCBBitY       = bity;
+        ptcb->OSTCBBitX       = bitx;
+    } else {
+        OSTCBPrioTbl[newprio] = (OS_TCB *)0;
+    }
+    OS_EXIT_CRITICAL();
+}
+
 void  OSIntExit (void)
 {
 #if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
@@ -182,6 +230,41 @@ void  OSIntExit (void)
             OSIntNesting--;
         }
         if ((OSIntNesting == 0) && (OSLockNesting == 0)) { /* Reschedule only if all ISRs complete ... */
+#ifdef SCHED_EDF
+            {
+                OS_TCB  *ptcb;
+                OS_TCB  *best   = (OS_TCB *)0;
+                INT32S   min_diff = 0x7FFFFFFFl;
+                INT32S   diff;
+
+                ptcb = OSTCBList;
+                while (ptcb != (OS_TCB *)0) {
+                    if ((ptcb->OSTCBStat == OS_STAT_RDY) &&
+                        (ptcb->OSTCBDly == 0u) &&
+                        (ptcb->OSTCBPrio != OS_IDLE_PRIO) &&
+                        (ptcb->OSTCBPrio != OS_STAT_PRIO) &&
+                        (ptcb->OSTCBPeriod > 0u)) {
+
+                        diff = (INT32S)ptcb->OSTCBDeadline - (INT32S)OSTimeGet();
+                        if (diff < min_diff) {
+                            min_diff = diff;
+                            best     = ptcb;
+                        }
+                    }
+                    ptcb = ptcb->OSTCBNext;
+                }
+
+                if ((best != (OS_TCB *)0) && (best->OSTCBPrio != 1u)) {
+                    OS_TCB *cur_p1 = OSTCBPrioTbl[1];
+
+                    if ((cur_p1 != (OS_TCB *)0) && (cur_p1 != (OS_TCB *)1)) {
+                        OS_EDFTaskChangePrio(1, cur_p1->OSTCBPrioOrg);
+                    }
+
+                    OS_EDFTaskChangePrio(best->OSTCBPrio, 1);
+                }
+            }
+#endif
             OSIntExitY    = OSUnMapTbl[OSRdyGrp];          /* ... and not locked.                      */
             OSPrioHighRdy = (INT8U)((OSIntExitY << 3) + OSUnMapTbl[OSRdyTbl[OSIntExitY]]);
             if (OSPrioHighRdy != OSPrioCur) {              /* No Ctx Sw if current task is highest rdy */
@@ -885,18 +968,21 @@ void  OS_Sched (void)
         {
             OS_TCB  *ptcb;
             OS_TCB  *best   = (OS_TCB *)0;
-            INT32U   min_dl = 0xFFFFFFFFl;
+            INT32S   min_diff = 0x7FFFFFFFl;
+            INT32S   diff;
 
             ptcb = OSTCBList;
             while (ptcb != (OS_TCB *)0) {
                 if ((ptcb->OSTCBStat == OS_STAT_RDY) &&
+                    (ptcb->OSTCBDly == 0u) &&
                     (ptcb->OSTCBPrio != OS_IDLE_PRIO) &&
                     (ptcb->OSTCBPrio != OS_STAT_PRIO) &&
                     (ptcb->OSTCBPeriod > 0u)) {
 
-                    if (ptcb->OSTCBDeadline < min_dl) {
-                        min_dl = ptcb->OSTCBDeadline;
-                        best   = ptcb;
+                    diff = (INT32S)ptcb->OSTCBDeadline - (INT32S)OSTimeGet();
+                    if (diff < min_diff) {
+                        min_diff = diff;
+                        best     = ptcb;
                     }
                 }
                 ptcb = ptcb->OSTCBNext;

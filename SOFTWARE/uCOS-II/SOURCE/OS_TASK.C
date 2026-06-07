@@ -99,6 +99,9 @@ INT8U  OSTaskChangePrio (INT8U oldprio, INT8U newprio)
             }
             OSTCBPrioTbl[newprio] = ptcb;                       /* Place pointer to TCB @ new priority */
             ptcb->OSTCBPrio       = newprio;                    /* Set new task priority               */
+            if (ptcb == OSTCBCur) {                              /* Keep current task priority in sync */
+                OSPrioCur = newprio;
+            }
             ptcb->OSTCBY          = y;
             ptcb->OSTCBX          = x;
             ptcb->OSTCBBitY       = bity;
