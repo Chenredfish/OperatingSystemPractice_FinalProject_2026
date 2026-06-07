@@ -40,6 +40,7 @@ INT32U  TaskPeriod[MAX_TASKS];
 INT32U  TaskExecTime[MAX_TASKS];
 int     TaskUsesSem[MAX_TASKS];
 int     TaskCount = 0;
+INT32U  GlobalStartTick = 0;
 
 /*
 *********************************************************************************************************
@@ -125,6 +126,7 @@ static  void  TaskStartCreateTasks (void)
     INT8U   prio;
     char    s[80];
 
+    GlobalStartTick = OSTimeGet();   /* common release origin for all tasks */
     fp = fopen("taskset.txt", "r");
     if (fp == (FILE *)0) {
         PC_DispStr(0, 5, "ERROR: cannot open taskset.txt", DISP_FGND_RED + DISP_BGND_BLACK);
@@ -208,9 +210,9 @@ void  PeriodicTask (void *pdata)
     run_count = 0;
     period_ticks = TaskPeriod[task_id - 1];
     exec_ticks   = TaskExecTime[task_id - 1];
+    release_tick = GlobalStartTick;   /* all tasks share same release origin for standard RM */
 
     for (;;) {
-        release_tick = OSTimeGet();
         run_count++;
 
         if (TaskUsesSem[task_id - 1])
@@ -230,7 +232,6 @@ void  PeriodicTask (void *pdata)
         }
 
         end_tick = OSTimeGet();
-        elapsed  = end_tick - release_tick; /* TEAMMATE C / PCP: keep periodic release timing */
 
         /* Fill in end time AFTER execution */
         sprintf(s, "Task%d  start=%4lds  end=%4lds  period=%4lds  #%3d",
@@ -244,7 +245,9 @@ void  PeriodicTask (void *pdata)
         if (TaskUsesSem[task_id - 1])
             OSSemPost(SharedSem);         /* release sem after this task is fully done */
 
-        delay_ticks = period_ticks - elapsed;
+        /* Standard RM: sleep until next absolute release time, not relative to completion */
+        release_tick += period_ticks;
+        delay_ticks = release_tick - OSTimeGet();
         if ((INT32S)delay_ticks > 0) {
             OSTimeDly((INT16U)delay_ticks);
         }
