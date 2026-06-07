@@ -273,8 +273,13 @@ void  OSSemPend (OS_EVENT *pevent, INT16U timeout, INT8U *err)
         return;
     }
     if (pevent->OSEventOwner != (void *)0 &&
-        OSTCBCur->OSTCBPrio >= pevent->OSEventCeiling) { /* TEAMMATE C / PCP: ceiling blocks this task */
-        ;                                             /* TEAMMATE C / PCP: keep normal sem wait path  */
+        OSTCBCur->OSTCBPrio >= pevent->OSEventCeiling) { /* PCP: current task not above ceiling        */
+        OS_TCB *owner = (OS_TCB *)pevent->OSEventOwner;
+        if (owner->OSTCBPrio > OSTCBCur->OSTCBPrio) {    /* Owner has lower prio — inherit             */
+            OS_EXIT_CRITICAL();
+            OSTaskChangePrio(owner->OSTCBPrio, OSTCBCur->OSTCBPrio);
+            OS_ENTER_CRITICAL();
+        }
     }
                                                       /* Otherwise, must wait until event occurs       */
     OSTCBCur->OSTCBStat |= OS_STAT_SEM;               /* Resource not available, pend on semaphore     */
@@ -328,6 +333,14 @@ INT8U  OSSemPost (OS_EVENT *pevent)
     }
 #endif
     OS_ENTER_CRITICAL();
+    {   /* PCP: restore owner's priority before releasing sem */
+        OS_TCB *owner = (OS_TCB *)pevent->OSEventOwner;
+        if (owner != (OS_TCB *)0 && owner->OSTCBPrio != owner->OSTCBPrioOrg) {
+            OS_EXIT_CRITICAL();
+            OSTaskChangePrio(owner->OSTCBPrio, owner->OSTCBPrioOrg);
+            OS_ENTER_CRITICAL();
+        }
+    }
     if (pevent->OSEventGrp != 0x00) {                      /* See if any task waiting for semaphore    */
         rdy_prio = OS_EventTaskRdy(pevent, (void *)0, OS_STAT_SEM); /* TEAMMATE C / PCP: pass sem to waiter */
         pevent->OSEventOwner = (void *)OSTCBPrioTbl[rdy_prio]; /* TEAMMATE C / PCP: new semaphore owner */
