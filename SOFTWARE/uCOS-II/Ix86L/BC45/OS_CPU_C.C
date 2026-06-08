@@ -20,6 +20,21 @@
 #define  OS_CPU_GLOBALS
 #include "includes.h"
 
+/* ---- Context-switch ring buffer (written by OSTaskSwHook, read by TaskStart) ---- */
+#define CTX_LOG_SIZE       2048
+#define TASK_RUN_BASE_SIZE 9       /* MAX_TASKS(7) + 2, indexed by OSTCBId */
+extern INT32U  TaskRunBase[TASK_RUN_BASE_SIZE];
+
+typedef struct {
+    INT32U  time;       /* raw OSTime tick at the moment of the switch          */
+    INT8U   from_id;    /* OSTCBId of the outgoing task  (0 = TaskStart / idle) */
+    INT8U   to_id;      /* OSTCBId of the incoming task                         */
+    INT8U   from_done;  /* 1 = from-task voluntarily yielded (OSTimeDly/Pend)   */
+} CTX_LOG_ENTRY;
+
+CTX_LOG_ENTRY  CtxLog[CTX_LOG_SIZE];
+INT16U         CtxLogCount = 0;
+
 /*
 *********************************************************************************************************
 *                                       OS INITIALIZATION HOOK
@@ -285,9 +300,27 @@ void  OSTaskStkInit_FPE_x86 (OS_STK **pptos, OS_STK **ppbos, INT32U *psize)
 *                 task being switched out (i.e. the preempted task).
 *********************************************************************************************************
 */
-#if OS_CPU_HOOKS_EN > 0 
+#if OS_CPU_HOOKS_EN > 0
 void  OSTaskSwHook (void)
 {
+    if (CtxLogCount < CTX_LOG_SIZE) {
+        CtxLog[CtxLogCount].time      = OSTime;
+        CtxLog[CtxLogCount].from_id   = (INT8U)OSTCBCur->OSTCBId;
+        CtxLog[CtxLogCount].to_id     = (INT8U)OSTCBHighRdy->OSTCBId;
+        /* voluntarily yielded: OSTCBDly>0 (OSTimeDly called), stat!=RDY (blocked on sem),
+         * OR busy-wait just completed this tick (RunCntr reached run_base + ExecTime) */
+        {
+            INT32U run_base_g = (OSTCBCur->OSTCBId < TASK_RUN_BASE_SIZE)
+                                ? TaskRunBase[OSTCBCur->OSTCBId] : 0;
+            INT8U  work_done  = (run_base_g > 0 && OSTCBCur->OSTCBExecTime > 0 &&
+                                 (OSTCBCur->OSTCBRunCntr - run_base_g) >= OSTCBCur->OSTCBExecTime)
+                                ? 1 : 0;
+            CtxLog[CtxLogCount].from_done = (OSTCBCur->OSTCBDly > 0 ||
+                                             OSTCBCur->OSTCBStat != OS_STAT_RDY ||
+                                             work_done) ? 1 : 0;
+        }
+        CtxLogCount++;
+    }
 }
 #endif
 

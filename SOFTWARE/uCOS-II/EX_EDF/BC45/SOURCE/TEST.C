@@ -16,6 +16,13 @@
 */
 
 #include "includes.h"
+#include <string.h>
+
+/* ---- Context-switch ring buffer (defined in OS_CPU_C.C) ---- */
+#define CTX_LOG_SIZE  2048
+typedef struct { INT32U time; INT8U from_id; INT8U to_id; INT8U from_done; } CTX_LOG_ENTRY;
+extern CTX_LOG_ENTRY  CtxLog[CTX_LOG_SIZE];
+extern INT16U         CtxLogCount;
 
 /*
 *********************************************************************************************************
@@ -41,6 +48,7 @@ INT32U  TaskExecTime[MAX_TASKS];
 int     TaskCount = 0;
 
 INT32U  MyStartTime;            /* tick baseline so displayed time starts from 0 */
+INT32U  TaskRunBase[MAX_TASKS + 2];   /* indexed by OSTCBId; set before busy-wait, cleared after */
 
 /*
 *********************************************************************************************************
@@ -97,13 +105,75 @@ void  TaskStart (void *pdata)
     OSStatInit();
     TaskStartCreateTasks();
 
-    for (;;) {
-        if (PC_GetKey(&key) == TRUE) {
-            if (key == 0x1B) {
-                PC_DOSReturn();
+    {
+        static INT32U seg_start_tick[MAX_TASKS + 2];   /* indexed by OSTCBId (1-based) */
+        static int    disp_row   = 8;
+        static INT16U render_idx = 0;
+
+        for (;;) {
+            INT16U log_snap = CtxLogCount;
+
+            while (render_idx < log_snap) {
+                CTX_LOG_ENTRY e   = CtxLog[render_idx];
+                INT32U        t_s = (e.time >= MyStartTime)
+                                    ? (e.time - MyStartTime) / OS_TICKS_PER_SEC : 0;
+                char          line[80];
+
+                /* Close (direct): user task voluntarily yields or is preempted by another user task */
+                if (e.from_id >= 1 && e.from_id <= (INT8U)TaskCount
+                    && seg_start_tick[e.from_id] != 0
+                    && (e.to_id != 0 || e.from_done)) {
+                    INT32U ss = (seg_start_tick[e.from_id] >= MyStartTime)
+                                ? (seg_start_tick[e.from_id] - MyStartTime) / OS_TICKS_PER_SEC : 0;
+                    if (t_s > ss) {
+                        sprintf(line, "Task%d:  start=%3lus  end=%3lus%s",
+                                (int)e.from_id - 1,
+                                (unsigned long)ss,
+                                (unsigned long)t_s,
+                                (!e.from_done) ? "  (preempted)" : "");
+                        PC_DispStr(0, disp_row, line, DISP_FGND_WHITE + DISP_BGND_BLACK);
+                        if (++disp_row > 23) disp_row = 8;
+                    }
+                    seg_start_tick[e.from_id] = 0;
+                }
+
+                /* Close (indirect): TaskStart resumes user task k -- any OTHER open user task
+                 * was preempted via TaskStart; close it as preempted right now */
+                if (e.from_id == 0 && e.to_id >= 1 && e.to_id <= (INT8U)TaskCount) {
+                    int j;
+                    for (j = 1; j <= (int)TaskCount; j++) {
+                        if (j != (int)e.to_id && seg_start_tick[j] != 0) {
+                            INT32U ss2 = (seg_start_tick[j] >= MyStartTime)
+                                         ? (seg_start_tick[j] - MyStartTime) / OS_TICKS_PER_SEC : 0;
+                            if (t_s > ss2) {
+                                sprintf(line, "Task%d:  start=%3lus  end=%3lus  (preempted)",
+                                        j - 1,
+                                        (unsigned long)ss2,
+                                        (unsigned long)t_s);
+                                PC_DispStr(0, disp_row, line, DISP_FGND_WHITE + DISP_BGND_BLACK);
+                                if (++disp_row > 23) disp_row = 8;
+                            }
+                            seg_start_tick[j] = 0;
+                        }
+                    }
+                }
+
+                /* Open: only record start time once per segment (never overwrite an open segment) */
+                if (e.to_id >= 1 && e.to_id <= (INT8U)TaskCount) {
+                    if (seg_start_tick[e.to_id] == 0)
+                        seg_start_tick[e.to_id] = e.time;
+                }
+
+                render_idx++;
             }
+
+            if (PC_GetKey(&key) == TRUE) {
+                if (key == 0x1B) {
+                    PC_DOSReturn();
+                }
+            }
+            OSTimeDlyHMSM(0, 0, 1, 0);
         }
-        OSTimeDlyHMSM(0, 0, 1, 0);
     }
 }
 
@@ -122,7 +192,6 @@ static  void  TaskStartCreateTasks (void)
     FILE   *fp;
     int     i;
     INT8U   prio;
-    char    s[80];
 
     fp = fopen("taskset.txt", "r");
     if (fp == (FILE *)0) {
@@ -147,7 +216,7 @@ static  void  TaskStartCreateTasks (void)
             (void *)(INT32U)(i + 1),
             &TaskStk[i][TASK_STK_SIZE - 1],
             prio,
-            prio,
+            (INT8U)(i + 1),     /* stable display ID independent of dynamic EDF priority */
             &TaskStk[i][0],
             TASK_STK_SIZE,
             (void *)0,
@@ -155,10 +224,31 @@ static  void  TaskStartCreateTasks (void)
             TaskPeriod[i],
             TaskExecTime[i]
         );
-        sprintf(s, "Task%d: exec=%lds  period=%lds  prio=%d",
-                (int)(i+1), TaskExecTime[i]/OS_TICKS_PER_SEC,
-                TaskPeriod[i]/OS_TICKS_PER_SEC, (int)prio);
-        PC_DispStr(0, 5 + i, s, DISP_FGND_WHITE + DISP_BGND_BLACK);
+    }
+
+    {
+        char info[160];
+        char chunk[32];
+        int  col      = 0;
+        int  info_row = 5;
+        info[0] = '\0';
+        for (i = 0; i < TaskCount; i++) {
+            sprintf(chunk, "T%d:e=%lds,p=%lds,d=%lds  ",
+                    i + 1,
+                    (long)(TaskExecTime[i] / OS_TICKS_PER_SEC),
+                    (long)(TaskPeriod[i]   / OS_TICKS_PER_SEC),
+                    (long)(TaskPeriod[i]   / OS_TICKS_PER_SEC));
+            if (col + (int)strlen(chunk) > 78) {
+                PC_DispStr(0, info_row, info, DISP_FGND_WHITE + DISP_BGND_BLACK);
+                info[0] = '\0';
+                col = 0;
+                info_row++;
+            }
+            strcat(info, chunk);
+            col += (int)strlen(chunk);
+        }
+        if (info[0])
+            PC_DispStr(0, info_row, info, DISP_FGND_WHITE + DISP_BGND_BLACK);
     }
 }
 
@@ -173,59 +263,34 @@ static  void  TaskStartCreateTasks (void)
 
 void  PeriodicTask (void *pdata)
 {
-    INT32U  start_tick;
+    INT32U  run_base;
     INT32U  end_tick;
     INT32U  delay_ticks;
-    INT8U   task_id;
-    INT16U  run_count;
-    char    s[80];
-    int     row;
 
-    task_id   = (INT8U)(INT32U)pdata;
-    row       = 11 + (int)task_id;
-    run_count = 0;
-
-    /* Anchor first absolute deadline to the shared time origin (MyStartTime). */
     OSTCBCur->OSTCBDeadline = MyStartTime + OSTCBCur->OSTCBPeriod;
 
-     for (;;) {
-        start_tick = OSTimeGet();
-        run_count++;
-
-        /* Print start time + deadline BEFORE execution (= context switch time) */
-        sprintf(s, "Task%d  start=%4lds  end=----s  dead=%4lds  period=%4lds  #%3d",
-                (int)task_id,
-                (start_tick - MyStartTime) / OS_TICKS_PER_SEC,
-                (OSTCBCur->OSTCBDeadline - MyStartTime) / OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
-                (int)run_count);
-        PC_DispStr(0, row, s, DISP_FGND_CYAN + DISP_BGND_BLACK);
-
-        while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) {
-            ;
-        }
+    for (;;) {
+        /* OSTCBRunCntr freezes during preemption -- correctly measures CPU time */
+        run_base = OSTCBCur->OSTCBRunCntr;
+        TaskRunBase[OSTCBCur->OSTCBId] = run_base;   /* expose to hook for work-done detection */
+        while ((OSTCBCur->OSTCBRunCntr - run_base) < OSTCBCur->OSTCBExecTime) { }
+        TaskRunBase[OSTCBCur->OSTCBId] = 0;           /* clear: hook must not re-trigger */
 
         end_tick = OSTimeGet();
 
-        /* Fill in end time AFTER execution */
-        sprintf(s, "Task%d  start=%4lds  end=%4lds  dead=%4lds  period=%4lds  #%3d",
-                (int)task_id,
-                (start_tick - MyStartTime) / OS_TICKS_PER_SEC,
-                (end_tick - MyStartTime) / OS_TICKS_PER_SEC,
-                (OSTCBCur->OSTCBDeadline - MyStartTime) / OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
-                (int)run_count);
-        PC_DispStr(0, row, s, DISP_FGND_CYAN + DISP_BGND_BLACK);
-
-        /* Next release time = current absolute deadline (relative deadline = period).
-           Sleep until that absolute instant instead of (period - exec_time): otherwise the
-           time spent waiting for higher-priority tasks before this task got to run is lost,
-           and the period drifts later every cycle. */
-        delay_ticks = OSTCBCur->OSTCBDeadline - end_tick;
-        OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;  /* advance to next period's deadline */
-        if ((INT32S)delay_ticks > 0) {
+        /* Sleep until current deadline (chunked to avoid INT16U overflow) */
+        if (OSTCBCur->OSTCBDeadline > end_tick) {
+            delay_ticks = OSTCBCur->OSTCBDeadline - end_tick;
+            while (delay_ticks > 60000) {
+                OSTimeDly(60000);
+                delay_ticks -= 60000;
+            }
             OSTimeDly((INT16U)delay_ticks);
+        } else {
+            OSTimeDly(1);   /* deadline missed: yield one tick then continue */
         }
+
+        OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;
     }
 }
 
@@ -241,7 +306,9 @@ static  void  TaskStartDispInit (void)
                DISP_FGND_WHITE + DISP_BGND_RED);
     PC_DispStr(0,  2, "Scheduler: Earliest Deadline First (EDF)  |  earliest deadline gets prio 1",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr(0,  9, "--- Runtime: start=context-switch  end=task-completed (all in seconds) ---",
+    PC_DispStr(0,  4, "Task Config:",
+               DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr(0,  7, "--- Context Switch Trace: each line = one CPU segment (seconds) ---",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr(0, 24, "                         <-- PRESS ESC TO QUIT -->                          ",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY + DISP_BLINK);

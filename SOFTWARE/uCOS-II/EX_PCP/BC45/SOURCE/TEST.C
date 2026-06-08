@@ -16,6 +16,13 @@
 */
 
 #include "includes.h"
+#include <string.h>
+
+/* ---- Context-switch ring buffer (defined in OS_CPU_C.C) ---- */
+#define CTX_LOG_SIZE  2048
+typedef struct { INT32U time; INT8U from_id; INT8U to_id; INT8U from_done; } CTX_LOG_ENTRY;
+extern CTX_LOG_ENTRY  CtxLog[CTX_LOG_SIZE];
+extern INT16U         CtxLogCount;
 
 /*
 *********************************************************************************************************
@@ -40,7 +47,8 @@ INT32U  TaskPeriod[MAX_TASKS];
 INT32U  TaskExecTime[MAX_TASKS];
 int     TaskUsesSem[MAX_TASKS];
 int     TaskCount = 0;
-INT32U  GlobalStartTick = 0;
+INT32U  MyStartTime;
+INT32U  TaskRunBase[MAX_TASKS + 2];   /* indexed by OSTCBId; set before busy-wait, cleared after */
 
 /*
 *********************************************************************************************************
@@ -97,13 +105,75 @@ void  TaskStart (void *pdata)
     OSStatInit();
     TaskStartCreateTasks();
 
-    for (;;) {
-        if (PC_GetKey(&key) == TRUE) {
-            if (key == 0x1B) {
-                PC_DOSReturn();
+    {
+        static INT32U seg_start_tick[MAX_TASKS + 2];   /* indexed by OSTCBId (1-based) */
+        static int    disp_row   = 8;
+        static INT16U render_idx = 0;
+
+        for (;;) {
+            INT16U log_snap = CtxLogCount;
+
+            while (render_idx < log_snap) {
+                CTX_LOG_ENTRY e   = CtxLog[render_idx];
+                INT32U        t_s = (e.time >= MyStartTime)
+                                    ? (e.time - MyStartTime) / OS_TICKS_PER_SEC : 0;
+                char          line[80];
+
+                /* Close (direct): user task voluntarily yields or is preempted by another user task */
+                if (e.from_id >= 1 && e.from_id <= (INT8U)TaskCount
+                    && seg_start_tick[e.from_id] != 0
+                    && (e.to_id != 0 || e.from_done)) {
+                    INT32U ss = (seg_start_tick[e.from_id] >= MyStartTime)
+                                ? (seg_start_tick[e.from_id] - MyStartTime) / OS_TICKS_PER_SEC : 0;
+                    if (t_s > ss) {
+                        sprintf(line, "Task%d:  start=%3lus  end=%3lus%s",
+                            (int)e.from_id,
+                                (unsigned long)ss,
+                                (unsigned long)t_s,
+                                (!e.from_done) ? "  (preempted)" : "");
+                        PC_DispStr(0, disp_row, line, DISP_FGND_WHITE + DISP_BGND_BLACK);
+                        if (++disp_row > 23) disp_row = 8;
+                    }
+                    seg_start_tick[e.from_id] = 0;
+                }
+
+                /* Close (indirect): TaskStart resumes user task k -- any OTHER open user task
+                 * was preempted via TaskStart; close it as preempted right now */
+                if (e.from_id == 0 && e.to_id >= 1 && e.to_id <= (INT8U)TaskCount) {
+                    int j;
+                    for (j = 1; j <= (int)TaskCount; j++) {
+                        if (j != (int)e.to_id && seg_start_tick[j] != 0) {
+                            INT32U ss2 = (seg_start_tick[j] >= MyStartTime)
+                                         ? (seg_start_tick[j] - MyStartTime) / OS_TICKS_PER_SEC : 0;
+                            if (t_s > ss2) {
+                                sprintf(line, "Task%d:  start=%3lus  end=%3lus  (preempted)",
+                                    j,
+                                        (unsigned long)ss2,
+                                        (unsigned long)t_s);
+                                PC_DispStr(0, disp_row, line, DISP_FGND_WHITE + DISP_BGND_BLACK);
+                                if (++disp_row > 23) disp_row = 8;
+                            }
+                            seg_start_tick[j] = 0;
+                        }
+                    }
+                }
+
+                /* Open: only record start time once per segment (never overwrite an open segment) */
+                if (e.to_id >= 1 && e.to_id <= (INT8U)TaskCount) {
+                    if (seg_start_tick[e.to_id] == 0)
+                        seg_start_tick[e.to_id] = e.time;
+                }
+
+                render_idx++;
             }
+
+            if (PC_GetKey(&key) == TRUE) {
+                if (key == 0x1B) {
+                    PC_DOSReturn();
+                }
+            }
+            OSTimeDlyHMSM(0, 0, 1, 0);
         }
-        OSTimeDlyHMSM(0, 0, 1, 0);
     }
 }
 
@@ -124,9 +194,7 @@ static  void  TaskStartCreateTasks (void)
     int     i, j, tmpS;
     INT32U  tmpP, tmpE;
     INT8U   prio;
-    char    s[80];
 
-    GlobalStartTick = 0;   /* TEAMMATE C / PCP: all releases are based on absolute t=0 */
     fp = fopen("taskset.txt", "r");
     if (fp == (FILE *)0) {
         PC_DispStr(0, 5, "ERROR: cannot open taskset.txt", DISP_FGND_RED + DISP_BGND_BLACK);
@@ -151,6 +219,8 @@ static  void  TaskStartCreateTasks (void)
         }
     }
 
+    MyStartTime = OSTimeGet();
+
     for (i = 0; i < TaskCount; i++) {
         prio = (INT8U)(i + 2);  /* prio=1 reserved as PCP ceiling; user tasks start at 2 */
         OSTaskCreateExt(
@@ -158,7 +228,7 @@ static  void  TaskStartCreateTasks (void)
             (void *)(INT32U)(i + 1),
             &TaskStk[i][TASK_STK_SIZE - 1],
             prio,
-            prio,
+            (INT8U)(i + 1),     /* stable ID; PCP may temporarily set prio=1 but OSTCBId stays */
             &TaskStk[i][0],
             TASK_STK_SIZE,
             (void *)0,
@@ -166,16 +236,36 @@ static  void  TaskStartCreateTasks (void)
             TaskPeriod[i],
             TaskExecTime[i]
         );
-        sprintf(s, "Task%d: exec=%lds period=%lds prio=%d sem=%c",
-                (int)(i+1), TaskExecTime[i]/OS_TICKS_PER_SEC,
-                TaskPeriod[i]/OS_TICKS_PER_SEC, (int)prio,
-                TaskUsesSem[i] ? 'Y' : 'N');
-        PC_DispStr(0, 5 + i, s, DISP_FGND_WHITE + DISP_BGND_BLACK);
     }
 
     SharedSem = OSSemCreate(1);
     SharedSem->OSEventCeiling = 1;          /* PCP: prio=1 reserved as ceiling, always free */
     SharedSem->OSEventOwner   = (void *)0;  /* SharedSem starts unlocked                    */
+
+    {
+        char info[160];
+        char chunk[32];
+        int  col      = 0;
+        int  info_row = 5;
+        info[0] = '\0';
+        for (i = 0; i < TaskCount; i++) {
+            sprintf(chunk, "T%d:e=%lds,p=%lds,sem=%c  ",
+                    i + 1,
+                    (long)(TaskExecTime[i] / OS_TICKS_PER_SEC),
+                    (long)(TaskPeriod[i]   / OS_TICKS_PER_SEC),
+                    TaskUsesSem[i] ? 'Y' : 'N');
+            if (col + (int)strlen(chunk) > 78) {
+                PC_DispStr(0, info_row, info, DISP_FGND_WHITE + DISP_BGND_BLACK);
+                info[0] = '\0';
+                col = 0;
+                info_row++;
+            }
+            strcat(info, chunk);
+            col += (int)strlen(chunk);
+        }
+        if (info[0])
+            PC_DispStr(0, info_row, info, DISP_FGND_WHITE + DISP_BGND_BLACK);
+    }
 }
 
 /*
@@ -193,73 +283,46 @@ static  void  TaskStartCreateTasks (void)
 void  PeriodicTask (void *pdata)
 {
     INT32U  release_tick;
-    INT32U  start_tick;
+    INT32U  run_base;
     INT32U  end_tick;
-    INT32U  elapsed;
     INT32U  delay_ticks;
     INT32U  period_ticks;
     INT32U  exec_ticks;
     INT8U   task_id;
     INT8U   err;
-    INT16U  run_count;
-    char    s[80];
-    int     row;
 
-    task_id   = (INT8U)(INT32U)pdata;
-    row       = 11 + (int)task_id;
-    run_count = 0;
-    period_ticks = TaskPeriod[task_id - 1];
-    exec_ticks   = TaskExecTime[task_id - 1];
-    release_tick = GlobalStartTick;   /* all tasks share same release origin for standard RM */
+    task_id      = (INT8U)(INT32U)pdata;
+    period_ticks = OSTCBCur->OSTCBPeriod;
+    exec_ticks   = OSTCBCur->OSTCBExecTime;
+    release_tick = MyStartTime;
 
     for (;;) {
         if (TaskUsesSem[task_id - 1])
             OSSemPend(SharedSem, 0, &err);
-        start_tick = OSTimeGet();       /* start after semaphore is acquired (or immediately if not using sem) */
-        while ((release_tick + period_ticks) <= start_tick) { /* TEAMMATE C / PCP: skip releases missed before actual start */
-            release_tick += period_ticks;
-        }
-        run_count = (INT16U)(release_tick / period_ticks + 1); /* TEAMMATE C / PCP: show actual release number */
 
-        /* Print start time AFTER semaphore acquisition (= real execution start) */
-        sprintf(s, "Task%d  start=%4lds  end=----s  period=%4lds  #%3d",
-                (int)task_id,
-                start_tick / OS_TICKS_PER_SEC,
-                period_ticks / OS_TICKS_PER_SEC,
-                (int)run_count);
-        PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
+        /* Snapshot AFTER semaphore: we measure CPU time spent in the critical section only */
+        run_base = OSTCBCur->OSTCBRunCntr;
+        TaskRunBase[OSTCBCur->OSTCBId] = run_base;   /* expose to hook for work-done detection */
+        while ((OSTCBCur->OSTCBRunCntr - run_base) < exec_ticks) { }
+        TaskRunBase[OSTCBCur->OSTCBId] = 0;           /* clear: hook must not re-trigger */
 
-        while ((OSTimeGet() - start_tick) < exec_ticks) { /* TEAMMATE C / PCP: do not count sem wait time */
-            ;
-        }
-
-        end_tick = start_tick + exec_ticks; /* TEAMMATE C / PCP: logical finish time avoids display overhead skip */
-
-        /* Fill in end time AFTER execution */
-        sprintf(s, "Task%d  start=%4lds  end=%4lds  period=%4lds  #%3d",
-                (int)task_id,
-                start_tick / OS_TICKS_PER_SEC,
-                end_tick / OS_TICKS_PER_SEC,
-                period_ticks / OS_TICKS_PER_SEC,
-                (int)run_count);
-        PC_DispStr(0, row, s, DISP_FGND_YELLOW + DISP_BGND_BLACK);
+        end_tick = OSTimeGet();
 
         if (TaskUsesSem[task_id - 1])
-            OSSemPost(SharedSem);         /* release sem after this task is fully done */
+            OSSemPost(SharedSem);
 
-        /* Standard RM: sleep until next absolute release time, not relative to completion */
+        /* Advance release_tick to next period boundary after end_tick */
         release_tick += period_ticks;
-        while ((release_tick + OS_TICKS_PER_SEC) <= end_tick) { /* TEAMMATE C / PCP: skip only if release is in an earlier displayed second */
+        while (release_tick <= end_tick)
             release_tick += period_ticks;
+
+        delay_ticks = release_tick - end_tick;
+        while (delay_ticks > 60000) {
+            OSTimeDly(60000);
+            delay_ticks -= 60000;
         }
-        if (release_tick <= end_tick) { /* TEAMMATE C / PCP: same-second release, run immediately */
-            delay_ticks = 0;
-        } else {
-            delay_ticks = release_tick - end_tick;
-        }
-        if ((INT32S)delay_ticks > 0) {
+        if ((INT32S)delay_ticks > 0)
             OSTimeDly((INT16U)delay_ticks);
-        }
     }
 }
 
@@ -275,7 +338,9 @@ static  void  TaskStartDispInit (void)
                DISP_FGND_WHITE + DISP_BGND_RED);
     PC_DispStr(0,  2, "Scheduler: RM  |  Bonus: Priority Ceiling Protocol on shared resource",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr(0,  9, "--- Runtime: start=context-switch  end=task-completed (all in seconds) ---",
+    PC_DispStr(0,  4, "Task Config:",
+               DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr(0,  7, "--- Context Switch Trace: each line = one CPU segment (seconds) ---",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr(0, 24, "                         <-- PRESS ESC TO QUIT -->                          ",
                DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY + DISP_BLINK);
