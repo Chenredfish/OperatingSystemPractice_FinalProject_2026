@@ -40,6 +40,8 @@ INT32U  TaskPeriod[MAX_TASKS];
 INT32U  TaskExecTime[MAX_TASKS];
 int     TaskCount = 0;
 
+INT32U  MyStartTime;            /* tick baseline so displayed time starts from 0 */
+
 /*
 *********************************************************************************************************
 *                                         FUNCTION PROTOTYPES
@@ -136,6 +138,8 @@ static  void  TaskStartCreateTasks (void)
     }
     fclose(fp);
 
+    MyStartTime = OSTimeGet();   /* time origin: all tasks released at t = 0 from here */
+
     for (i = 0; i < TaskCount; i++) {
         prio = (INT8U)(BASE_PRIO + i);
         OSTaskCreateExt(
@@ -171,7 +175,6 @@ void  PeriodicTask (void *pdata)
 {
     INT32U  start_tick;
     INT32U  end_tick;
-    INT32U  elapsed;
     INT32U  delay_ticks;
     INT8U   task_id;
     INT16U  run_count;
@@ -182,6 +185,8 @@ void  PeriodicTask (void *pdata)
     row       = 11 + (int)task_id;
     run_count = 0;
 
+    /* Anchor first absolute deadline to the shared time origin (MyStartTime). */
+    OSTCBCur->OSTCBDeadline = MyStartTime + OSTCBCur->OSTCBPeriod;
 
      for (;;) {
         start_tick = OSTimeGet();
@@ -190,8 +195,8 @@ void  PeriodicTask (void *pdata)
         /* Print start time + deadline BEFORE execution (= context switch time) */
         sprintf(s, "Task%d  start=%4lds  end=----s  dead=%4lds  period=%4lds  #%3d",
                 (int)task_id,
-                start_tick / OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBDeadline / OS_TICKS_PER_SEC,
+                (start_tick - MyStartTime) / OS_TICKS_PER_SEC,
+                (OSTCBCur->OSTCBDeadline - MyStartTime) / OS_TICKS_PER_SEC,
                 OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
                 (int)run_count);
         PC_DispStr(0, row, s, DISP_FGND_CYAN + DISP_BGND_BLACK);
@@ -201,20 +206,23 @@ void  PeriodicTask (void *pdata)
         }
 
         end_tick = OSTimeGet();
-        elapsed  = end_tick - start_tick;
 
         /* Fill in end time AFTER execution */
         sprintf(s, "Task%d  start=%4lds  end=%4lds  dead=%4lds  period=%4lds  #%3d",
                 (int)task_id,
-                start_tick / OS_TICKS_PER_SEC,
-                end_tick / OS_TICKS_PER_SEC,
-                OSTCBCur->OSTCBDeadline / OS_TICKS_PER_SEC,
+                (start_tick - MyStartTime) / OS_TICKS_PER_SEC,
+                (end_tick - MyStartTime) / OS_TICKS_PER_SEC,
+                (OSTCBCur->OSTCBDeadline - MyStartTime) / OS_TICKS_PER_SEC,
                 OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC,
                 (int)run_count);
         PC_DispStr(0, row, s, DISP_FGND_CYAN + DISP_BGND_BLACK);
 
-        delay_ticks = OSTCBCur->OSTCBPeriod - elapsed;
-        OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;  /* must be before OSTimeDly */
+        /* Next release time = current absolute deadline (relative deadline = period).
+           Sleep until that absolute instant instead of (period - exec_time): otherwise the
+           time spent waiting for higher-priority tasks before this task got to run is lost,
+           and the period drifts later every cycle. */
+        delay_ticks = OSTCBCur->OSTCBDeadline - end_tick;
+        OSTCBCur->OSTCBDeadline += OSTCBCur->OSTCBPeriod;  /* advance to next period's deadline */
         if ((INT32S)delay_ticks > 0) {
             OSTimeDly((INT16U)delay_ticks);
         }

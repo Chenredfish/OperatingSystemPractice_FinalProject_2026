@@ -175,10 +175,11 @@ void PeriodicTask(void *pdata)
 {
     char s[80];
     INT32U start_tick, end_tick, delay_ticks, next_arrival, run_count = 0;
-    INT8U task_id = (INT8U)(INT32U)pdata; 
+    INT8U task_id = (INT8U)(INT32U)pdata;
     int display_id = task_id - 1;
     int row = 11 + display_id;
-    INT32U start_sec, end_sec, period_sec;
+    INT32U start_sec, end_sec, period_sec, exec_sec;
+    INT32U run_base, done_ticks, shown_ticks;
 
     next_arrival = MyStartTime + OSTCBCur->OSTCBPeriod;
     OSTCBCur->OSTCBDeadline = next_arrival;
@@ -188,22 +189,39 @@ void PeriodicTask(void *pdata)
         run_count++;
         start_tick = OSTimeGet();
 
-        start_sec = (start_tick - MyStartTime) / OS_TICKS_PER_SEC;
-        period_sec = OSTCBCur->OSTCBPeriod / OS_TICKS_PER_SEC;
+        start_sec  = (start_tick - MyStartTime) / OS_TICKS_PER_SEC;
+        period_sec = OSTCBCur->OSTCBPeriod   / OS_TICKS_PER_SEC;
+        exec_sec   = OSTCBCur->OSTCBExecTime / OS_TICKS_PER_SEC;
 
-        sprintf(s, "Task%d : start=%5lu  end=----s  period=%5lu  run=%4lu",
-                display_id, (unsigned long)start_sec, (unsigned long)period_sec, (unsigned long)run_count);
+        sprintf(s, "Task%d : start=%5lu  exec=%3lu/%3lu  end=----   period=%5lu  run=%4lu",
+                display_id, (unsigned long)start_sec,
+                (unsigned long)0, (unsigned long)exec_sec,
+                (unsigned long)period_sec, (unsigned long)run_count);
         PC_DispStr(0, row, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 
-        while ((OSTimeGet() - start_tick) < OSTCBCur->OSTCBExecTime) {
-            // 空轉
+        /* Consume CPU time measured by the task's own run counter, which only      */
+        /* advances while this task actually holds the CPU.  When preempted, the     */
+        /* counter freezes, so progress pauses here and resumes after we are awoken. */
+        run_base    = OSTCBCur->OSTCBRunCntr;
+        shown_ticks = 0;
+        while ((done_ticks = OSTCBCur->OSTCBRunCntr - run_base) < OSTCBCur->OSTCBExecTime) {
+            if (done_ticks != shown_ticks) {               /* progressed by >=1 tick: refresh the row  */
+                shown_ticks = done_ticks;
+                sprintf(s, "Task%d : start=%5lu  exec=%3lu/%3lu  end=----   period=%5lu  run=%4lu",
+                        display_id, (unsigned long)start_sec,
+                        (unsigned long)(done_ticks / OS_TICKS_PER_SEC), (unsigned long)exec_sec,
+                        (unsigned long)period_sec, (unsigned long)run_count);
+                PC_DispStr(0, row, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+            }
         }
 
-        end_tick = OSTimeGet();
-        end_sec = (end_tick - MyStartTime) / OS_TICKS_PER_SEC;
+        end_tick = OSTimeGet();                            /* real wall-clock completion time          */
+        end_sec  = (end_tick - MyStartTime) / OS_TICKS_PER_SEC;
 
-        sprintf(s, "Task%d : start=%5lu  end=%5lu  period=%5lu  run=%4lu",
-                display_id, (unsigned long)start_sec, (unsigned long)end_sec, (unsigned long)period_sec, (unsigned long)run_count);
+        sprintf(s, "Task%d : start=%5lu  exec=%3lu/%3lu  end=%5lu  period=%5lu  run=%4lu",
+                display_id, (unsigned long)start_sec,
+                (unsigned long)exec_sec, (unsigned long)exec_sec,
+                (unsigned long)end_sec, (unsigned long)period_sec, (unsigned long)run_count);
         PC_DispStr(0, row, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 
         if (next_arrival > OSTimeGet()) {
@@ -214,7 +232,7 @@ void PeriodicTask(void *pdata)
         }
 
         next_arrival += OSTCBCur->OSTCBPeriod;
-        OSTCBCur->OSTCBDeadline = next_arrival; 
+        OSTCBCur->OSTCBDeadline = next_arrival;
     }
 }
 

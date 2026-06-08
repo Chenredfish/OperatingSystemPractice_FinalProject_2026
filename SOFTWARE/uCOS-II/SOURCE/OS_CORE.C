@@ -458,7 +458,10 @@ void  OSTimeTick (void)
     OSTime++;
     OS_EXIT_CRITICAL();
 #endif
-    if (OSRunning == TRUE) {    
+    if (OSRunning == TRUE) {
+        OS_ENTER_CRITICAL();
+        OSTCBCur->OSTCBRunCntr++;                          /* Charge this tick to the running task     */
+        OS_EXIT_CRITICAL();                                /* (real CPU time, excludes preempted time) */
         ptcb = OSTCBList;                                  /* Point at first TCB in TCB list           */
         while (ptcb->OSTCBPrio != OS_IDLE_PRIO) {          /* Go through all TCBs in TCB list          */
             OS_ENTER_CRITICAL();
@@ -1177,6 +1180,7 @@ INT8U  OS_TCBInit (INT8U prio, OS_STK *ptos, OS_STK *pbos, INT16U id, INT32U stk
         ptcb->OSTCBPrio      = (INT8U)prio;                /* Load task priority into TCB              */
         ptcb->OSTCBStat      = OS_STAT_RDY;                /* Task is ready to run                     */
         ptcb->OSTCBDly       = 0;                          /* Task is not delayed                      */
+        ptcb->OSTCBRunCntr   = 0;                          /* No CPU time consumed yet                 */
 
 #if OS_TASK_CREATE_EXT_EN > 0
         ptcb->OSTCBExtPtr    = pext;                       /* Store pointer to TCB extension           */

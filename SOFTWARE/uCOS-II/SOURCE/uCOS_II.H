@@ -415,6 +415,7 @@ typedef struct os_tcb {
     INT32U         OSTCBExecTime;      /* Task execution time in ticks                                 */
     INT32U         OSTCBDeadline;      /* Task absolute deadline in ticks (used by EDF)                */
     INT8U          OSTCBPrioOrg;       /* Task original priority (used by EDF/PCP to restore)          */
+    INT32U         OSTCBRunCntr;       /* CPU ticks actually consumed by this task (charged in OSTimeTick) */
 } OS_TCB;
 
 /*$PAGE*/
