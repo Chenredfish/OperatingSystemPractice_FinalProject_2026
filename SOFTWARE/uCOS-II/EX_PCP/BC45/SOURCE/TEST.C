@@ -148,8 +148,8 @@ void  TaskStart (void *pdata)
                             if (t_s > ss2) {
                                 sprintf(line, "Task%d:  start=%3lus  end=%3lus  (preempted)",
                                     j,
-                                        (unsigned long)ss2,
-                                        (unsigned long)t_s);
+                                    (unsigned long)ss2,
+                                    (unsigned long)t_s);
                                 PC_DispStr(0, disp_row, line, DISP_FGND_WHITE + DISP_BGND_BLACK);
                                 if (++disp_row > 23) disp_row = 8;
                             }
@@ -304,12 +304,13 @@ void  PeriodicTask (void *pdata)
         run_base = OSTCBCur->OSTCBRunCntr;
         TaskRunBase[OSTCBCur->OSTCBId] = run_base;   /* expose to hook for work-done detection */
         while ((OSTCBCur->OSTCBRunCntr - run_base) < exec_ticks) { }
-        TaskRunBase[OSTCBCur->OSTCBId] = 0;           /* clear: hook must not re-trigger */
 
         end_tick = OSTimeGet();
 
         if (TaskUsesSem[task_id - 1])
             OSSemPost(SharedSem);
+
+        TaskRunBase[OSTCBCur->OSTCBId] = 0;           /* clear after release so hook can see completion */
 
         /* Advance release_tick to next period boundary after end_tick */
         release_tick += period_ticks;
