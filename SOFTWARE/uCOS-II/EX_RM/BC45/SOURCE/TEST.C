@@ -226,6 +226,10 @@ void PeriodicTask(void *pdata)
 
         if (next_arrival > OSTimeGet()) {
             delay_ticks = next_arrival - OSTimeGet();
+            while (delay_ticks > 60000) {                   /* OSTimeDly takes INT16U (max 65535):      */
+                OSTimeDly(60000);                           /* split long waits so a large period       */
+                delay_ticks -= 60000;                       /* cannot overflow / get truncated          */
+            }
             OSTimeDly((INT16U)delay_ticks);
         } else {
             OSTimeDly(1);
