@@ -127,7 +127,7 @@ void  TaskStart (void *pdata)
                                 ? (seg_start_tick[e.from_id] - MyStartTime) / OS_TICKS_PER_SEC : 0;
                     if (t_s > ss) {
                         sprintf(line, "Task%d:  start=%3lus  end=%3lus%s",
-                                (int)e.from_id - 1,
+                            (int)e.from_id,
                                 (unsigned long)ss,
                                 (unsigned long)t_s,
                                 (!e.from_done) ? "  (preempted)" : "");
@@ -147,7 +147,7 @@ void  TaskStart (void *pdata)
                                          ? (seg_start_tick[j] - MyStartTime) / OS_TICKS_PER_SEC : 0;
                             if (t_s > ss2) {
                                 sprintf(line, "Task%d:  start=%3lus  end=%3lus  (preempted)",
-                                        j - 1,
+                                    j,
                                         (unsigned long)ss2,
                                         (unsigned long)t_s);
                                 PC_DispStr(0, disp_row, line, DISP_FGND_WHITE + DISP_BGND_BLACK);

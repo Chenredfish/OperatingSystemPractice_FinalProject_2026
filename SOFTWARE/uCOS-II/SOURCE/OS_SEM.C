@@ -268,6 +268,22 @@ void  OSSemPend (OS_EVENT *pevent, INT16U timeout, INT8U *err)
     if (pevent->OSEventCnt > 0) {                     /* If sem. is positive, resource available ...   */
         pevent->OSEventCnt--;                         /* ... decrement semaphore only if positive.     */
         pevent->OSEventOwner = (void *)OSTCBCur;      /* TEAMMATE C / PCP: record semaphore owner     */
+        /* PCP: if owner priority is below the semaphore ceiling,
+         * immediately raise owner to the ceiling. OSTaskChangePrio
+         * drops the critical section internally, so follow the same
+         * re-check pattern used in the blocking path.
+         */
+        if (OSTCBCur->OSTCBPrio > pevent->OSEventCeiling) {
+            OS_EXIT_CRITICAL();
+            OSTaskChangePrio(OSTCBCur->OSTCBPrio, pevent->OSEventCeiling);
+            OS_ENTER_CRITICAL();
+            /* Re-check: unlikely that owner changed, but keep consistent */
+            if (pevent->OSEventOwner != (void *)OSTCBCur) {
+                OS_EXIT_CRITICAL();
+                *err = OS_NO_ERR;
+                return;
+            }
+        }
         OS_EXIT_CRITICAL();
         *err = OS_NO_ERR;
         return;

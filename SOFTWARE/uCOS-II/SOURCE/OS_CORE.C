@@ -995,14 +995,10 @@ void  OS_Sched (void)
                 OS_TCB *cur_p1 = OSTCBPrioTbl[1];
 
                 if ((cur_p1 != (OS_TCB *)0) && (cur_p1 != (OS_TCB *)1)) {
-                    OS_EXIT_CRITICAL();
-                    OSTaskChangePrio(1, cur_p1->OSTCBPrioOrg);
-                    OS_ENTER_CRITICAL();
+                    OS_EDFTaskChangePrio(1, cur_p1->OSTCBPrioOrg);
                 }
 
-                OS_EXIT_CRITICAL();
-                OSTaskChangePrio(best->OSTCBPrio, 1);
-                OS_ENTER_CRITICAL();
+                OS_EDFTaskChangePrio(best->OSTCBPrio, 1);
             }
         }
 #endif /* SCHED_EDF */
