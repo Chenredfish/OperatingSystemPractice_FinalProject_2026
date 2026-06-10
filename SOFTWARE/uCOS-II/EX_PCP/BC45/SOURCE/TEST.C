@@ -221,6 +221,13 @@ static  void  TaskStartCreateTasks (void)
 
     MyStartTime = OSTimeGet();
 
+    /* Initialize TaskRunBase to sentinel so hook won't treat 0 as a valid base */
+    {
+        int _i;
+        for (_i = 0; _i < MAX_TASKS + 2; _i++)
+            TaskRunBase[_i] = 0xFFFFFFFFu;
+    }
+
     for (i = 0; i < TaskCount; i++) {
         prio = (INT8U)(i + 2);  /* prio=1 reserved as PCP ceiling; user tasks start at 2 */
         OSTaskCreateExt(

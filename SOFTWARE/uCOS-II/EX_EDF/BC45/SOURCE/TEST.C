@@ -209,6 +209,13 @@ static  void  TaskStartCreateTasks (void)
 
     MyStartTime = OSTimeGet();   /* time origin: all tasks released at t = 0 from here */
 
+    /* Initialize TaskRunBase to sentinel so hook won't treat 0 as a valid base */
+    {
+        int _i;
+        for (_i = 0; _i < MAX_TASKS + 2; _i++)
+            TaskRunBase[_i] = 0xFFFFFFFFu;
+    }
+
     for (i = 0; i < TaskCount; i++) {
         prio = (INT8U)(BASE_PRIO + i);
         OSTaskCreateExt(
