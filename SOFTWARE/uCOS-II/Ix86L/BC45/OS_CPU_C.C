@@ -310,10 +310,14 @@ void  OSTaskSwHook (void)
         /* voluntarily yielded: OSTCBDly>0 (OSTimeDly called), stat!=RDY (blocked on sem),
          * OR busy-wait just completed this tick (RunCntr reached run_base + ExecTime) */
         {
+            /* Use a sentinel value (0xFFFFFFFF) to indicate "no run base"
+             * so that a cleared TaskRunBase cannot be confused with a valid 0.
+             */
             INT32U run_base_g = (OSTCBCur->OSTCBId < TASK_RUN_BASE_SIZE)
-                                ? TaskRunBase[OSTCBCur->OSTCBId] : 0;
-            INT8U  work_done  = (run_base_g > 0 && OSTCBCur->OSTCBExecTime > 0 &&
-                                 (OSTCBCur->OSTCBRunCntr - run_base_g) >= OSTCBCur->OSTCBExecTime)
+                                ? TaskRunBase[OSTCBCur->OSTCBId] : 0xFFFFFFFFu;
+            INT8U  work_done  = (run_base_g != 0xFFFFFFFFu &&
+                                 OSTCBCur->OSTCBExecTime > 0 &&
+                                 (INT32S)(OSTCBCur->OSTCBRunCntr - run_base_g) >= (INT32S)OSTCBCur->OSTCBExecTime)
                                 ? 1 : 0;
             CtxLog[CtxLogCount].from_done = (OSTCBCur->OSTCBDly > 0 ||
                                              OSTCBCur->OSTCBStat != OS_STAT_RDY ||

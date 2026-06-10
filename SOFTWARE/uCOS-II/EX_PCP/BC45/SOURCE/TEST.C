@@ -310,7 +310,7 @@ void  PeriodicTask (void *pdata)
         if (TaskUsesSem[task_id - 1])
             OSSemPost(SharedSem);
 
-        TaskRunBase[OSTCBCur->OSTCBId] = 0;           /* clear after release so hook can see completion */
+        TaskRunBase[OSTCBCur->OSTCBId] = 0xFFFFFFFFu;           /* clear after release so hook can see completion */
 
         /* Advance release_tick to next period boundary after end_tick */
         release_tick += period_ticks;

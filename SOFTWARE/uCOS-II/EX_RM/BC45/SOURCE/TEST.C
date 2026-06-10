@@ -271,7 +271,7 @@ void PeriodicTask(void *pdata)
         run_base = OSTCBCur->OSTCBRunCntr;
         TaskRunBase[OSTCBCur->OSTCBId] = run_base;   /* expose to hook for work-done detection */
         while ((OSTCBCur->OSTCBRunCntr - run_base) < OSTCBCur->OSTCBExecTime) { }
-        TaskRunBase[OSTCBCur->OSTCBId] = 0;           /* clear: hook must not re-trigger */
+        TaskRunBase[OSTCBCur->OSTCBId] = 0xFFFFFFFFu;           /* clear: hook must not re-trigger */
 
         /* Sleep until next absolute release (chunked to avoid INT16U overflow) */
         if (next_arrival > OSTimeGet()) {
